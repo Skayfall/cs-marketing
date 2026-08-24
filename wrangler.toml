@@ -5,6 +5,9 @@ compatibility_date = "2026-08-24"
 [vars]
 ADMIN_USERNAME = "admin"
 
+[secrets]
+required = ["ADMIN_PASSWORD", "SESSION_SECRET"]
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
