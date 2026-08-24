@@ -3,490 +3,324 @@
 
   const fmt = new Intl.NumberFormat('ru-RU');
   const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
-  const pct = (v, d = 1) => `${Number(v || 0).toFixed(d).replace('.', ',')}%`;
-  const n = (v) => Number(v || 0);
-  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-  const sum = (arr, key) => arr.reduce((a, x) => a + n(typeof key === 'function' ? key(x) : x[key]), 0);
-  const avg = (arr, key) => arr.length ? sum(arr, key) / arr.length : 0;
+  const pct = (v, d = 1) => v === null || v === undefined || Number.isNaN(Number(v)) ? '—' : `${Number(v).toFixed(d).replace('.', ',')}%`;
+  const num = (v) => Number(v || 0);
+  const sum = (arr, key) => (arr || []).reduce((a, x) => a + num(typeof key === 'function' ? key(x) : x?.[key]), 0);
+  const avg = (arr, key) => (arr || []).length ? sum(arr, key) / arr.length : 0;
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const today = new Date();
   const iso = (d) => new Date(d).toISOString().slice(0, 10);
-  const ruDate = (s) => new Date(`${s}T12:00:00`).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
-  const escapeHtml = (s) => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-
-  function dayOffset(days) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + days);
-    return iso(d);
-  }
-
-  const demo = {
-    site: Array.from({length: 90}, (_, i) => {
-      const wave = Math.sin(i / 5) * 10;
-      const trend = i * .18;
-      const visits = Math.max(18, Math.round(42 + wave + trend + ((i * 17) % 13)));
-      const users = Math.round(visits * (.67 + ((i % 5) * .02)));
-      const conversions = Math.max(0, Math.round(visits * (.018 + (i % 7 === 0 ? .012 : 0))));
-      return { date: dayOffset(i - 89), visits, users, pageviews: Math.round(visits * 3.6), bounceRate: 13 + (i % 8) * 1.2, depth: 3.2 + (i % 6) * .18, duration: 215 + (i % 7) * 14, conversions };
-    }),
-    sources: [
-      {name:'Поиск', visits:742, change:18, conversions:14}, {name:'Прямые', visits:218, change:5, conversions:3},
-      {name:'VK', visits:94, change:-21, conversions:1}, {name:'Telegram', visits:61, change:14, conversions:1},
-      {name:'Директ', visits:186, change:32, conversions:5}, {name:'Прочее', visits:73, change:-3, conversions:0}
-    ],
-    pages: [
-      {page:'/catalog/gibkaya-podvodka/', title:'Гибкая подводка', visits:284, bounce:10.8, depth:4.6, conversions:7},
-      {page:'/catalog/smesiteli/', title:'Смесители', visits:201, bounce:14.1, depth:3.9, conversions:5},
-      {page:'/dealer/', title:'Стать дилером', visits:124, bounce:22.5, depth:2.7, conversions:4},
-      {page:'/product/cs-sm-294/', title:'Смеситель ЦС-СМ 294', visits:93, bounce:8.9, depth:5.1, conversions:2},
-      {page:'/blog/legionella/', title:'Легионелла в водопроводе', visits:77, bounce:18.1, depth:2.8, conversions:0},
-      {page:'/catalog/dushevye-sistemy/', title:'Душевые системы', visits:61, bounce:36.5, depth:1.8, conversions:0}
-    ],
-    seo: [
-      {query:'центр сантехники официальный сайт', shows:1840, clicks:213, ctr:11.6, position:2.4, delta:1.2},
-      {query:'гибкая подводка оптом', shows:3260, clicks:82, ctr:2.5, position:8.7, delta:2.8},
-      {query:'производитель гибкой подводки', shows:1940, clicks:57, ctr:2.9, position:7.9, delta:1.6},
-      {query:'смесители оптом от производителя', shows:2810, clicks:41, ctr:1.5, position:12.2, delta:-3.7},
-      {query:'смеситель цс', shows:820, clicks:76, ctr:9.3, position:4.1, delta:.9},
-      {query:'сантехника оптом для магазина', shows:1560, clicks:19, ctr:1.2, position:14.8, delta:-1.4},
-      {query:'гибкая подводка 1 2 500 мм', shows:1120, clicks:38, ctr:3.4, position:9.2, delta:2.1},
-      {query:'центр сантехники подольск', shows:740, clicks:138, ctr:18.6, position:1.8, delta:.2}
-    ],
-    ads: [
-      {name:'Яндекс — дилеры поиск', impressions:18840, clicks:612, spend:15280, conversions:12},
-      {name:'Яндекс — товарная', impressions:29420, clicks:804, spend:13210, conversions:15},
-      {name:'VK — дилеры', impressions:62140, clicks:280, spend:14960, conversions:1},
-      {name:'Ретаргетинг', impressions:10420, clicks:316, spend:4820, conversions:8}
-    ],
-    adsDaily: Array.from({length: 30}, (_, i) => ({date:dayOffset(i-29), spend: 780 + ((i*83)%520), clicks: 35+((i*13)%28), conversions: (i%4===0?3:(i%3===0?2:1))})),
-    social: [
-      {channel:'Telegram', title:'Убийца жил внутри трубы: легионелла', date:dayOffset(-4), reach:1840, reactions:141},
-      {channel:'VK', title:'Как устроена гибкая подводка', date:dayOffset(-6), reach:4230, reactions:172},
-      {channel:'Дзен', title:'Почему человечество тысячу лет не могло сделать нормальный смеситель', date:dayOffset(-9), reach:2760, reactions:95},
-      {channel:'Telegram', title:'Собери комплект: что подходит к смесителю?', date:dayOffset(-12), reach:1320, reactions:118},
-      {channel:'VK', title:'Смеситель ЦС-СМ 294 в интерьере', date:dayOffset(-15), reach:3520, reactions:74},
-      {channel:'MAX', title:'Как проверить подводку перед установкой', date:dayOffset(-18), reach:780, reactions:31}
-    ],
-    email: [
-      {name:'Новинки августа', date:dayOffset(-5), sent:2480, opened:684, clicked:129, unsub:8, errors:31},
-      {name:'Предложение для дилеров', date:dayOffset(-18), sent:2310, opened:510, clicked:72, unsub:13, errors:36},
-      {name:'Гибкая подводка: ассортимент', date:dayOffset(-33), sent:2250, opened:702, clicked:168, unsub:6, errors:25}
-    ],
-    tasks: [
-      {id:'t1', title:'Пересобрать VK-кампанию: оффер + аудитории', priority:'high', source:'Реклама', done:false},
-      {id:'t2', title:'Проверить падение запросов по смесителям', priority:'high', source:'SEO', done:false},
-      {id:'t3', title:'Обновить сниппеты страниц с большим числом показов и CTR < 2%', priority:'medium', source:'SEO', done:false},
-      {id:'t4', title:'Проверить страницу душевых систем: высокий показатель отказов', priority:'medium', source:'Сайт', done:false},
-      {id:'t5', title:'Повторить экспертный формат Telegram: история + сантехника', priority:'low', source:'Контент', done:false}
-    ]
+  const ruDate = (s) => s ? new Date(`${String(s).slice(0,10)}T12:00:00`).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' }) : '—';
+  const duration = (seconds) => {
+    const s = Math.max(0, Math.round(num(seconds))); const m = Math.floor(s / 60); const r = s % 60;
+    return `${m}:${String(r).padStart(2,'0')}`;
   };
+  const valueOrDash = (v, formatter = (x) => fmt.format(x)) => (v === null || v === undefined) ? '—' : formatter(v);
+  const dayStart = (days) => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - (days - 1)); return d; };
+  const inPeriod = (date, days) => { if (!date) return false; const d = new Date(`${String(date).slice(0,10)}T12:00:00`); return d >= dayStart(days); };
 
-  let state = loadState();
+  const blank = () => ({
+    site: [], sitePeriods: {}, sources: [], pages: [], searchEngines: [], devices: [], regions: [], goals: [],
+    seo: [], seoSummary: null, seoIndex: [], seoProblems: [],
+    adsMeta: [], adsDaily: [], social: [], email: [],
+    meta: { metrikaCounterId: null, goalMapping: { email: [], forms: [] } }
+  });
+
+  let state = blank();
+  let apiStatus = { mode: 'empty', integrations: {} };
   let charts = {};
-  let apiStatus = { mode: 'demo', integrations: {} };
   let currentUser = null;
+  let adChannelFilter = 'Все';
 
+  const LOCAL_KEY = 'cs-marketing-v6-local';
   const AUTH_TOKEN_KEY = 'cs-marketing-auth-token-v4';
+  const local = loadLocal();
 
-  function getFallbackToken() {
-    try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; }
+  function loadLocal() {
+    try { return JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}'); } catch { return {}; }
   }
-
-  function setFallbackToken(token) {
-    try {
-      if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
-      else sessionStorage.removeItem(AUTH_TOKEN_KEY);
-      sessionStorage.removeItem('cs-marketing-auth-token');
-    } catch {}
+  function saveLocal() {
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ manualTasks: local.manualTasks || [], doneTasks: local.doneTasks || {} })); } catch {}
   }
-
+  function getFallbackToken() { try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; } }
+  function setFallbackToken(token) { try { token ? sessionStorage.setItem(AUTH_TOKEN_KEY, token) : sessionStorage.removeItem(AUTH_TOKEN_KEY); } catch {} }
   async function apiFetch(url, options = {}) {
-    const headers = new Headers(options.headers || {});
-    const token = getFallbackToken();
+    const headers = new Headers(options.headers || {}); const token = getFallbackToken();
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
-    return fetch(url, { ...options, headers, credentials: 'include', cache: options.cache || 'no-store' });
+    return fetch(url, { ...options, headers, credentials: 'include', cache: 'no-store' });
   }
 
   function showAuthScreen(message = '') {
-    currentUser = null;
-    document.getElementById('appShell').hidden = true;
-    document.getElementById('authScreen').hidden = false;
-    const err = document.getElementById('authError');
-    err.textContent = message;
-    err.hidden = !message;
+    currentUser = null; document.getElementById('appShell').hidden = true; document.getElementById('authScreen').hidden = false;
+    const err = document.getElementById('authError'); err.textContent = message; err.hidden = !message;
     document.getElementById('passwordInput').value = '';
-    setTimeout(() => document.getElementById('loginInput').focus(), 0);
   }
-
   async function showApp(user) {
-    currentUser = user || 'admin';
-    document.getElementById('authScreen').hidden = true;
-    document.getElementById('appShell').hidden = false;
+    currentUser = user || 'admin'; document.getElementById('authScreen').hidden = true; document.getElementById('appShell').hidden = false;
     document.getElementById('accountName').textContent = currentUser;
-    renderAll();
-    await fetchApiStatus();
-    await loadLiveData();
+    renderAll(); await fetchApiStatus(); await loadLiveData();
   }
-
   async function checkSession(token = getFallbackToken()) {
-    const headers = new Headers({ Accept: 'application/json' });
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const headers = new Headers({ Accept: 'application/json' }); if (token) headers.set('Authorization', `Bearer ${token}`);
     const response = await fetch('/api/auth/session', { headers, credentials: 'include', cache: 'no-store' });
-    const data = await response.json().catch(() => ({}));
-    return { response, data };
+    const data = await response.json().catch(() => ({})); return { response, data };
   }
-
   async function initAuth() {
-    try {
-      const { response, data } = await checkSession();
-      if (response.ok && data.authenticated) {
-        await showApp(data.user);
-        return;
-      }
-      setFallbackToken('');
-      showAuthScreen();
-    } catch (err) {
-      showAuthScreen(`Не удалось связаться с сервером авторизации: ${err?.message || 'ошибка сети'}`);
-    }
+    try { const { response, data } = await checkSession(); if (response.ok && data.authenticated) return showApp(data.user); setFallbackToken(''); showAuthScreen(); }
+    catch (e) { showAuthScreen(`Не удалось связаться с сервером: ${e?.message || 'ошибка сети'}`); }
   }
-
   async function login(event) {
-    event.preventDefault();
-    const username = document.getElementById('loginInput').value.trim();
-    const password = document.getElementById('passwordInput').value;
-    const button = document.getElementById('loginBtn');
-    const error = document.getElementById('authError');
-    error.hidden = true;
-    button.disabled = true;
-    button.textContent = 'Проверяю…';
+    event.preventDefault(); const button = document.getElementById('loginBtn'); const error = document.getElementById('authError'); error.hidden = true;
+    button.disabled = true; button.textContent = 'Проверяю…';
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        credentials: 'include',
-        cache: 'no-store',
-        body: JSON.stringify({ username, password })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `Ошибка входа (${response.status})`);
-      if (!data.token) throw new Error('Сервер принял пароль, но не вернул сессионный токен.');
-      setFallbackToken(data.token);
+      const response = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json',Accept:'application/json'}, credentials:'include', cache:'no-store', body:JSON.stringify({username:document.getElementById('loginInput').value.trim(),password:document.getElementById('passwordInput').value}) });
+      const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `Ошибка входа (${response.status})`);
+      if (data.token) setFallbackToken(data.token); await showApp(data.user || 'admin');
+    } catch (e) { error.textContent = e?.message || 'Не удалось войти'; error.hidden = false; }
+    finally { button.disabled = false; button.textContent = 'Войти'; }
+  }
+  async function logout() { try { await apiFetch('/api/auth/logout', { method:'POST' }); } catch {} setFallbackToken(''); showAuthScreen(); }
 
-      const verified = await checkSession(data.token);
-      if (!verified.response.ok || !verified.data.authenticated) {
-        setFallbackToken('');
-        throw new Error(`Вход принят, но проверка сессии не прошла: ${verified.data.reason || verified.response.status}`);
-      }
-      await showApp(verified.data.user || data.user);
-    } catch (err) {
-      error.textContent = err?.message || 'Не удалось войти';
-      error.hidden = false;
-      document.getElementById('passwordInput').select();
-    } finally {
-      button.disabled = false;
-      button.textContent = 'Войти';
+  function renderMetricGrid(id, items) {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = items.map(x => `<article class="metric-card"><div class="metric-top"><div class="metric-title">${escapeHtml(x.title)}</div>${x.delta === null || x.delta === undefined ? '' : `<span class="delta ${x.delta>0?'up':x.delta<0?'down':'flat'}">${x.delta>0?'+':''}${Number(x.delta).toFixed(1).replace('.',',')}%</span>`}</div><div class="metric-value">${x.value}</div><div class="metric-note">${escapeHtml(x.note || '')}</div></article>`).join('');
+  }
+  function statusPill(text, cls='info') { return `<span class="status ${cls}">${escapeHtml(text)}</span>`; }
+  function issueHtml(x) { return `<div class="issue-item"><div class="issue-icon ${x.level}">${x.level==='high'?'!':x.level==='medium'?'↗':'i'}</div><div><div class="issue-title">${escapeHtml(x.title)}</div><div class="issue-text">${escapeHtml(x.text)}</div>${x.action?`<div class="issue-action">${escapeHtml(x.action)}</div>`:''}</div></div>`; }
+  function chart(id, type, data, options = {}) {
+    const canvas = document.getElementById(id); if (!canvas || !window.Chart) return;
+    if (charts[id]) charts[id].destroy();
+    charts[id] = new Chart(canvas, { type, data, options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{legend:{display:false},tooltip:{enabled:true}}, scales:type==='doughnut'?{}:{x:{grid:{display:false},ticks:{color:'#98a2b3'}},y:{beginAtZero:true,grid:{color:'#eef0f3'},ticks:{color:'#98a2b3'}}}, ...options } });
+  }
+  function compareSeries(arr, days, key) {
+    const sorted = [...(arr||[])].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    const current = sorted.filter(x=>inPeriod(x.date,days)); const prevStart = new Date(dayStart(days)); prevStart.setDate(prevStart.getDate()-days); const prevEnd = new Date(dayStart(days)); prevEnd.setDate(prevEnd.getDate()-1);
+    const previous = sorted.filter(x=>{const d=new Date(`${x.date}T12:00:00`);return d>=prevStart&&d<=prevEnd;});
+    const c=sum(current,key), p=sum(previous,key); return { current:c, previous:p, delta:p?((c-p)/p*100):null };
+  }
+
+  function siteRows(days) { return state.site.filter(x=>inPeriod(x.date,days)).sort((a,b)=>String(a.date).localeCompare(String(b.date))); }
+  function siteSummary(days) {
+    const exact=state.sitePeriods?.[String(days)] || state.sitePeriods?.[days];
+    if(exact) return {visits:num(exact.visits),users:num(exact.users),pageviews:num(exact.pageviews),bounce:num(exact.bounceRate),depth:num(exact.depth),duration:num(exact.duration),newVisitors:num(exact.newVisitors),goals:num(exact.conversions),emailClicks:num(exact.emailClicks),formSubmits:num(exact.formSubmits)};
+    const rows=siteRows(days); if(!rows.length)return null;
+    return {visits:sum(rows,'visits'),users:sum(rows,'users'),pageviews:sum(rows,'pageviews'),bounce:avg(rows,'bounceRate'),depth:avg(rows,'depth'),duration:avg(rows,'duration'),newVisitors:avg(rows,'newVisitors'),goals:sum(rows,'conversions'),emailClicks:sum(rows,'emailClicks'),formSubmits:sum(rows,'formSubmits')};
+  }
+  function seoSummary() {
+    if(!state.seo.length && !state.seoSummary)return null;
+    return {shows:sum(state.seo,'shows'),clicks:sum(state.seo,'clicks'),ctr:sum(state.seo,'shows')?sum(state.seo,'clicks')/sum(state.seo,'shows')*100:0,position:avg(state.seo,'position'),...(state.seoSummary||{})};
+  }
+  function aggregateAds(days, channel='Все') {
+    const rows=(state.adsDaily||[]).filter(x=>inPeriod(x.date,days) && (channel==='Все'||x.channel===channel));
+    const meta=(state.adsMeta||[]).filter(x=>channel==='Все'||x.channel===channel);
+    const map=new Map();
+    meta.forEach(m=>map.set(`${m.channel}|${m.campaignId||m.name}`,{...m,impressions:0,clicks:0,spend:0,conversions:0}));
+    rows.forEach(r=>{const key=`${r.channel}|${r.campaignId||r.name}`;const v=map.get(key)||{channel:r.channel,name:r.name,campaignId:r.campaignId||'',status:r.status||'unknown',impressions:0,clicks:0,spend:0,conversions:0};v.impressions+=num(r.impressions);v.clicks+=num(r.clicks);v.spend+=num(r.spend);v.conversions+=num(r.conversions);map.set(key,v);});
+    return [...map.values()].map(x=>({...x,ctr:x.impressions?x.clicks/x.impressions*100:0,cpc:x.clicks?x.spend/x.clicks:0,cvr:x.clicks?x.conversions/x.clicks*100:0,cpa:x.conversions?x.spend/x.conversions:null}));
+  }
+  function adTotals(rows){return {impressions:sum(rows,'impressions'),clicks:sum(rows,'clicks'),spend:sum(rows,'spend'),conversions:sum(rows,'conversions')};}
+  function socialRows(days){return state.social.filter(x=>!x.date||inPeriod(x.date,days));}
+  function socialSummary(days){const rows=socialRows(days);if(!rows.length)return null;const eng=sum(rows,x=>num(x.reactions)+num(x.comments)+num(x.shares));const latestByChannel=new Map();[...rows].sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(x=>{if(x.followers!==null&&x.followers!==undefined)latestByChannel.set(x.channel,x);});return {posts:rows.length,reach:sum(rows,'reach'),views:sum(rows,'views'),engagements:eng,clicks:sum(rows,'clicks'),er:sum(rows,'reach')?eng/sum(rows,'reach')*100:0,followers:[...latestByChannel.values()].reduce((a,x)=>a+num(x.followers),0),followersDelta:[...latestByChannel.values()].reduce((a,x)=>a+num(x.followersDelta),0)};}
+  function emailRows(days){return state.email.filter(x=>!x.date||inPeriod(x.date,days));}
+  function emailSummary(days){const rows=emailRows(days);if(!rows.length)return null;const sent=sum(rows,'sent'),delivered=sum(rows,'delivered'),opened=sum(rows,'opened'),clicked=sum(rows,'clicked');return {sent,delivered,opened,clicked,errors:sum(rows,'errors'),unsub:sum(rows,'unsub'),spam:sum(rows,'spam'),deliveryRate:sent?delivered/sent*100:0,openRate:delivered?opened/delivered*100:0,ctr:delivered?clicked/delivered*100:0,unsubRate:delivered?sum(rows,'unsub')/delivered*100:0};}
+
+  function getOverviewIssues(days) {
+    const out=[]; const s=siteSummary(days); const seo=seoSummary();
+    if(!s) out.push({level:'medium',title:'Нет данных Метрики',text:'Пока нельзя оценить посещаемость и заявки.',action:'Подключить Яндекс Метрику или импортировать отчёт.'});
+    else {
+      if(s.bounce>35) out.push({level:'high',title:'Высокий показатель отказов',text:`Среднее значение ${pct(s.bounce)} за выбранный период.`,action:'Проверить страницы входа и несколько сессий в Вебвизоре.'});
+      if(s.formSubmits===0 && (state.meta?.goalMapping?.forms||[]).length) out.push({level:'high',title:'Нет отправок форм',text:'Цели форм найдены, но за период нет достижений.',action:'Проверить формы на сайте и корректность срабатывания целей.'});
+      if(!(state.meta?.goalMapping?.forms||[]).length) out.push({level:'medium',title:'Цель отправки заявки не определена',text:'Приложение не нашло подходящую цель формы в Метрике.',action:'Проверить названия целей или создать отдельную цель «Отправка формы».'});
     }
-  }
-
-  async function logout() {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include', cache: 'no-store' }); } catch {}
-    setFallbackToken('');
-    showAuthScreen();
-  }
-
-  function loadState(){
-    try {
-      const raw = localStorage.getItem('marketing-os-state-v1');
-      if (!raw) return structuredClone(demo);
-      const parsed = JSON.parse(raw);
-      return {...structuredClone(demo), ...parsed, tasks: parsed.tasks || structuredClone(demo.tasks)};
-    } catch { return structuredClone(demo); }
-  }
-  function saveState(){ localStorage.setItem('marketing-os-state-v1', JSON.stringify(state)); }
-
-  function periodData(arr, days, dateKey='date') {
-    const from = new Date(today); from.setDate(from.getDate() - (days - 1)); from.setHours(0,0,0,0);
-    return arr.filter(x => new Date(`${x[dateKey]}T12:00:00`) >= from);
-  }
-  function deltaValue(current, previous) { if (!previous) return current ? 100 : 0; return ((current - previous) / previous) * 100; }
-  function comparePeriod(arr, days, key) {
-    const sorted = [...arr].sort((a,b)=>a.date.localeCompare(b.date));
-    const recent = sorted.slice(-days); const prev = sorted.slice(-(days*2), -days);
-    return { current: sum(recent,key), previous: sum(prev,key), delta: deltaValue(sum(recent,key), sum(prev,key)) };
-  }
-  function compareAvg(arr, days, key) {
-    const sorted = [...arr].sort((a,b)=>a.date.localeCompare(b.date));
-    const recent = sorted.slice(-days); const prev = sorted.slice(-(days*2), -days);
-    const c = avg(recent,key), p = avg(prev,key); return {current:c, previous:p, delta:deltaValue(c,p)};
-  }
-  function deltaBadge(v, inverse=false) {
-    const val = Number(v || 0); const good = inverse ? val < 0 : val > 0;
-    const cls = Math.abs(val) < .3 ? 'flat' : good ? 'up' : 'down';
-    const sign = val > 0 ? '+' : '';
-    return `<span class="delta ${cls}">${sign}${val.toFixed(1).replace('.',',')}%</span>`;
-  }
-  function statusPill(label, cls='good'){ return `<span class="status ${cls}">${escapeHtml(label)}</span>`; }
-
-  function calcHealth() {
-    const days = Number(document.getElementById('periodSelect').value || 30);
-    const traffic = comparePeriod(state.site, Math.min(days, Math.floor(state.site.length/2)), 'visits');
-    const ads = summarizeAds(); const seo = summarizeSeo(); const site = summarizeSite(days);
-    let score = 78;
-    score += clamp(traffic.delta, -20, 20) * .25;
-    score += seo.avgPosition < 10 ? 4 : -4;
-    score += ads.cpa < 2500 ? 5 : ads.cpa > 5000 ? -8 : 0;
-    score += site.bounce < 20 ? 4 : site.bounce > 35 ? -5 : 0;
-    return clamp(Math.round(score), 35, 98);
-  }
-
-  function summarizeSite(days=30){
-    const d = periodData(state.site, days);
-    return { visits:sum(d,'visits'), users:sum(d,'users'), conversions:sum(d,'conversions'), bounce:avg(d,'bounceRate'), depth:avg(d,'depth'), duration:avg(d,'duration') };
-  }
-  function summarizeSeo(){
-    return {shows:sum(state.seo,'shows'), clicks:sum(state.seo,'clicks'), ctr:sum(state.seo,'shows') ? sum(state.seo,'clicks')/sum(state.seo,'shows')*100 : 0, avgPosition:avg(state.seo,'position'), growing:state.seo.filter(x=>x.delta>0).length, falling:state.seo.filter(x=>x.delta<0).length};
-  }
-  function summarizeAds(){
-    const spend=sum(state.ads,'spend'), clicks=sum(state.ads,'clicks'), impressions=sum(state.ads,'impressions'), conversions=sum(state.ads,'conversions');
-    return {spend,clicks,impressions,conversions,ctr:impressions?clicks/impressions*100:0,cpc:clicks?spend/clicks:0,cpa:conversions?spend/conversions:0};
-  }
-  function summarizeSocial(){
-    const reach=sum(state.social,'reach'), reactions=sum(state.social,'reactions'); return {reach,reactions,er:reach?reactions/reach*100:0, posts:state.social.length};
-  }
-  function summarizeEmail(){
-    const sent=sum(state.email,'sent'), opened=sum(state.email,'opened'), clicked=sum(state.email,'clicked'), unsub=sum(state.email,'unsub'), errors=sum(state.email,'errors');
-    return {sent,opened,clicked,unsub,errors,openRate:sent?opened/sent*100:0,ctr:sent?clicked/sent*100:0,unsubRate:sent?unsub/sent*100:0};
-  }
-
-  function getIssues(){
-    const issues=[]; const ads=summarizeAds(); const seo=summarizeSeo(); const site=summarizeSite(Number(document.getElementById('periodSelect').value||30)); const email=summarizeEmail();
-    const badCampaign = [...state.ads].map(x=>({...x,cpa:x.conversions?x.spend/x.conversions:Infinity,ctr:x.impressions?x.clicks/x.impressions*100:0})).sort((a,b)=>b.cpa-a.cpa)[0];
-    if (badCampaign && badCampaign.cpa > 4000) issues.push({level:'high',title:`Реклама: ${badCampaign.name}`,text:`CPA ${isFinite(badCampaign.cpa)?money.format(badCampaign.cpa):'без конверсий'}, CTR ${pct(badCampaign.ctr)}. Канал расходует бюджет значительно хуже остальных.`,action:'Остановить масштабирование и протестировать новый оффер/аудиторию.',view:'ads'});
-    const seoDrop=[...state.seo].filter(x=>x.delta<0).sort((a,b)=>a.delta-b.delta)[0];
-    if(seoDrop) issues.push({level:'high',title:`SEO: падает «${seoDrop.query}»`,text:`Средняя позиция ${seoDrop.position.toFixed(1)}, изменение ${seoDrop.delta.toFixed(1)}. При ${fmt.format(seoDrop.shows)} показах потеря позиции уже влияет на трафик.`,action:'Проверить страницу, сниппет, внутренние ссылки и конкурентов.',view:'seo'});
-    const weakPage=[...state.pages].sort((a,b)=>b.bounce-a.bounce)[0];
-    if(weakPage && weakPage.bounce>30) issues.push({level:'medium',title:`Сайт: высокий отказ на «${weakPage.title}»`,text:`Отказы ${pct(weakPage.bounce)}, глубина ${weakPage.depth.toFixed(1)}. Страница приводит трафик, но плохо удерживает его.`,action:'Проверить первый экран, интент страницы и скорость загрузки.',view:'site'});
-    if(email.openRate<25 && email.sent>0) issues.push({level:'medium',title:'Email: открытия ниже рабочего ориентира',text:`Средний Open Rate ${pct(email.openRate)}. Это сигнал проверить тему, имя отправителя и качество базы.`,action:'Сделать A/B тест темы следующей рассылки.',view:'email'});
-    const opp=state.seo.filter(x=>x.position>=5&&x.position<=15&&x.shows>1000).sort((a,b)=>b.shows-a.shows)[0];
-    if(opp) issues.push({level:'low',title:`SEO-возможность: «${opp.query}»`,text:`${fmt.format(opp.shows)} показов, позиция ${opp.position.toFixed(1)}, CTR ${pct(opp.ctr)}. Запрос уже близко к первой пятёрке.`,action:'Приоритетно усилить страницу — это самый дешёвый рост.',view:'seo'});
-    return issues;
-  }
-
-  function renderMetricGrid(id, items){
-    document.getElementById(id).innerHTML = items.map(x=>`<article class="metric-card"><div class="metric-top"><span class="metric-title">${escapeHtml(x.title)}</span>${x.delta !== undefined ? deltaBadge(x.delta,x.inverse): (x.badge||'')}</div><div class="metric-value">${x.value}</div><div class="metric-note">${escapeHtml(x.note||'')}</div></article>`).join('');
-  }
-
-  function chart(id,type,data,options={}){
-    if(!window.Chart) return;
-    if(charts[id]) charts[id].destroy();
-    const ctx=document.getElementById(id); if(!ctx) return;
-    charts[id]=new Chart(ctx,{type,data,options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#101828',padding:10,titleColor:'#fff',bodyColor:'#fff'}},scales:type==='doughnut'?{}:{x:{grid:{display:false},ticks:{color:'#98a2b3',maxTicksLimit:8}},y:{beginAtZero:true,grid:{color:'#eef0f3'},ticks:{color:'#98a2b3'}}},...options}});
+    const falling=[...state.seo].filter(x=>num(x.delta)<-1&&num(x.shows)>100).sort((a,b)=>a.delta-b.delta)[0];
+    if(falling) out.push({level:'medium',title:`Проседает запрос «${falling.query}»`,text:`Позиция ${num(falling.position).toFixed(1)}, изменение ${num(falling.delta).toFixed(1)}.`,action:'Открыть SEO → проверить страницу и сниппет.'});
+    if(seo && num(seo.critical)>0) out.push({level:'high',title:'В Вебмастере есть критические проблемы',text:`Критических проблем: ${fmt.format(seo.critical)}.`,action:'Открыть SEO → Диагностика и исправить сначала критические ошибки.'});
+    return out.slice(0,6);
   }
 
   function renderOverview(){
-    const days=Number(document.getElementById('periodSelect').value||30); const sd=periodData(state.site,days); const health=calcHealth(); const site=summarizeSite(days); const ads=summarizeAds(); const seo=summarizeSeo(); const social=summarizeSocial();
-    const trafficCmp=comparePeriod(state.site,Math.min(days,Math.floor(state.site.length/2)),'visits');
-    document.getElementById('healthScore').textContent=health;
-    document.getElementById('healthStatus').textContent=health>=82?'Маркетинг работает устойчиво':health>=65?'Система в норме, но есть точки риска':'Нужно вмешательство в несколько каналов';
-    const issues=getIssues();
-    document.getElementById('healthSummary').textContent=`${seo.growing} SEO-запросов растут, ${seo.falling} снижаются; рекламный CPA ${money.format(ads.cpa)}.`;
-    if(issues[0]){document.getElementById('focusTitle').textContent=issues[0].title;document.getElementById('focusText').textContent=issues[0].action;document.querySelector('[data-jump]').dataset.jump=issues[0].view;}
+    const days=num(document.getElementById('periodSelect').value||30), s=siteSummary(days), visitsCmp=compareSeries(state.site,days,'visits');
     renderMetricGrid('overviewMetrics',[
-      {title:'Визиты',value:fmt.format(site.visits),delta:trafficCmp.delta,note:`за ${days} дней`},
-      {title:'Конверсии сайта',value:fmt.format(site.conversions),note:`CR ${site.visits?pct(site.conversions/site.visits*100):'0%'}`},
-      {title:'Рекламные расходы',value:money.format(ads.spend),note:`CPA ${money.format(ads.cpa)}`},
-      {title:'Охват соцсетей',value:fmt.format(social.reach),note:`ER ${pct(social.er)}`}
+      {title:'Посещения сайта',value:s?fmt.format(s.visits):'—',delta:s?visitsCmp.delta:null,note:`за ${days} дней`},
+      {title:'Посетители',value:s?fmt.format(s.users):'—',note:'уникальные пользователи'},
+      {title:'Клики по email',value:s?fmt.format(s.emailClicks):'—',note:(state.meta?.goalMapping?.email||[]).length?`цели: ${state.meta.goalMapping.email.join(', ')}`:'цель пока не найдена'},
+      {title:'Отправки заявок',value:s?fmt.format(s.formSubmits):'—',note:(state.meta?.goalMapping?.forms||[]).length?`цели: ${state.meta.goalMapping.forms.join(', ')}`:'цель пока не найдена'}
     ]);
-    chart('overviewChart','line',{labels:sd.map(x=>ruDate(x.date)),datasets:[{label:'Визиты',data:sd.map(x=>x.visits),borderColor:'#4457ff',backgroundColor:'rgba(68,87,255,.08)',fill:true,tension:.32,pointRadius:0},{label:'Конверсии ×20',data:sd.map(x=>x.conversions*20),borderColor:'#12b76a',backgroundColor:'transparent',tension:.32,pointRadius:0}]});
-    document.getElementById('issuesCount').textContent=`${issues.length} сигнал${issues.length===1?'':issues.length<5?'а':'ов'}`;
-    document.getElementById('issueList').innerHTML=issues.map(issueHtml).join('');
-    const channels=[
-      {name:'Органический поиск',value:state.sources.find(x=>x.name==='Поиск')?.visits||0,delta:18,conv:14,cost:'0 ₽',score:['Сильный','good']},
-      {name:'Яндекс Директ',value:state.sources.find(x=>x.name==='Директ')?.visits||0,delta:32,conv:ads.conversions,cost:money.format(ads.spend),score:[ads.cpa<3000?'Работает':'Дорого',ads.cpa<3000?'good':'warn']},
-      {name:'VK',value:state.social.filter(x=>x.channel==='VK').reduce((a,x)=>a+x.reach,0),delta:-8,conv:state.ads.find(x=>x.name.includes('VK'))?.conversions||0,cost:money.format(state.ads.find(x=>x.name.includes('VK'))?.spend||0),score:['Требует изменений','bad']},
-      {name:'Telegram',value:state.social.filter(x=>x.channel==='Telegram').reduce((a,x)=>a+x.reach,0),delta:14,conv:1,cost:'0 ₽',score:['Стабильно','good']}
-    ];
-    document.getElementById('channelTable').innerHTML=channels.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong></td><td>${fmt.format(x.value)}</td><td>${deltaBadge(x.delta)}</td><td>${fmt.format(x.conv)}</td><td>${x.cost}</td><td>${statusPill(x.score[0],x.score[1])}</td></tr>`).join('');
+    const rows=siteRows(days); chart('overviewChart','line',{labels:rows.map(x=>ruDate(x.date)),datasets:[{label:'Визиты',data:rows.map(x=>x.visits),borderColor:'#4457ff',backgroundColor:'rgba(68,87,255,.08)',fill:true,tension:.28,pointRadius:0},{label:'Заявки',data:rows.map(x=>x.formSubmits||0),borderColor:'#12b76a',backgroundColor:'transparent',tension:.28,pointRadius:2}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const connected=Boolean(apiStatus.integrations?.metrika?.connected), counter=state.meta?.metrikaCounterId || apiStatus.metrikaCounterId;
+    const btn=document.getElementById('openWebvisorBtn'); btn.disabled=!connected||!counter; btn.onclick=()=>{if(counter)window.open(`https://metrika.yandex.ru/webvisor?id=${encodeURIComponent(counter)}`,'_blank','noopener');};
+    const ws=document.getElementById('webvisorStatus'); ws.textContent=connected?'Метрика подключена':'Нет подключения'; ws.className=`badge ${connected?'good':'warn'}`;
+    document.getElementById('webvisorHints').innerHTML=s?`<div class="mini-stat"><strong>${pct(s.bounce)}</strong><span>отказы</span></div><div class="mini-stat"><strong>${duration(s.duration)}</strong><span>среднее время</span></div><div class="mini-stat"><strong>${s.depth.toFixed(2)}</strong><span>глубина</span></div>`:'';
+    const src=state.sources.slice(0,8); chart('sourceChart','doughnut',{labels:src.map(x=>x.name),datasets:[{data:src.map(x=>x.visits),backgroundColor:['#4457ff','#12b76a','#f79009','#2e90fa','#7f56d9','#98a2b3','#e31b54','#6172f3']}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const engines=state.searchEngines.slice(0,8), max=Math.max(1,...engines.map(x=>num(x.visits))); document.getElementById('searchEngineList').innerHTML=engines.length?engines.map(x=>`<div class="rank-row"><div><strong>${escapeHtml(x.name)}</strong><span>${fmt.format(x.visits)} визитов</span></div><div class="rank-bar"><i style="width:${Math.max(3,num(x.visits)/max*100)}%"></i></div></div>`).join(''):`<div class="empty-state">Нет данных по поисковым системам.</div>`;
+    const issues=getOverviewIssues(days); document.getElementById('issuesCount').textContent=`${issues.length} ${issues.length===1?'сигнал':'сигналов'}`; document.getElementById('issueList').innerHTML=issues.length?issues.map(issueHtml).join(''):`<div class="empty-state">Критичных сигналов по доступным данным нет.</div>`;
   }
-
-  function issueHtml(x){return `<div class="issue-item"><div class="issue-icon ${x.level}">${x.level==='high'?'!':x.level==='medium'?'↗':'+'}</div><div><div class="issue-title">${escapeHtml(x.title)}</div><div class="issue-text">${escapeHtml(x.text)}</div><div class="issue-action">${escapeHtml(x.action)}</div></div></div>`}
 
   function renderSite(){
-    const days=Number(document.getElementById('periodSelect').value||30), d=periodData(state.site,days), s=summarizeSite(days), cmp=comparePeriod(state.site,Math.min(days,Math.floor(state.site.length/2)),'visits'), bounceCmp=compareAvg(state.site,Math.min(days,Math.floor(state.site.length/2)),'bounceRate');
+    const days=num(document.getElementById('periodSelect').value||30), s=siteSummary(days), rows=siteRows(days);
     renderMetricGrid('siteMetrics',[
-      {title:'Визиты',value:fmt.format(s.visits),delta:cmp.delta,note:`за ${days} дней`},{title:'Посетители',value:fmt.format(s.users),note:'уникальные'},
-      {title:'Отказы',value:pct(s.bounce),delta:bounceCmp.delta,inverse:true,note:'чем ниже, тем лучше'},{title:'Средняя глубина',value:s.depth.toFixed(2).replace('.',','),note:`время ${Math.floor(s.duration/60)}:${String(Math.round(s.duration%60)).padStart(2,'0')}`}
+      {title:'Визиты',value:s?fmt.format(s.visits):'—',note:'сессии'}, {title:'Пользователи',value:s?fmt.format(s.users):'—',note:'уникальные посетители'}, {title:'Просмотры',value:s?fmt.format(s.pageviews):'—',note:'страницы'}, {title:'Отказы',value:s?pct(s.bounce):'—',note:'среднее'},
+      {title:'Глубина',value:s?s.depth.toFixed(2):'—',note:'страниц за визит'}, {title:'Время на сайте',value:s?duration(s.duration):'—',note:'среднее'}, {title:'Новые посетители',value:s?pct(s.newVisitors):'—',note:'доля новых'}, {title:'Достижения целей',value:s?fmt.format(s.goals):'—',note:'все цели Метрики'}
     ]);
-    chart('siteChart','line',{labels:d.map(x=>ruDate(x.date)),datasets:[{data:d.map(x=>x.visits),borderColor:'#4457ff',backgroundColor:'rgba(68,87,255,.08)',fill:true,tension:.3,pointRadius:0}]});
-    chart('sourceChart','doughnut',{labels:state.sources.map(x=>x.name),datasets:[{data:state.sources.map(x=>x.visits),backgroundColor:['#4457ff','#12b76a','#f79009','#6172f3','#2e90fa','#98a2b3'],borderWidth:0}]},{cutout:'68%',plugins:{legend:{display:true,position:'bottom',labels:{boxWidth:10,usePointStyle:true}}}});
-    document.getElementById('pagesTable').innerHTML=[...state.pages].sort((a,b)=>b.visits-a.visits).map(x=>`<tr><td><strong>${escapeHtml(x.title)}</strong><div class="muted">${escapeHtml(x.page)}</div></td><td>${fmt.format(x.visits)}</td><td class="${x.bounce>30?'num-bad':x.bounce<15?'num-good':''}">${pct(x.bounce)}</td><td>${x.depth.toFixed(1)}</td><td>${x.conversions}</td><td>${x.bounce>30?statusPill('Проверить','bad'):x.conversions>2?statusPill('Сильная','good'):statusPill('Норма','info')}</td></tr>`).join('');
+    chart('siteChart','line',{labels:rows.map(x=>ruDate(x.date)),datasets:[{label:'Визиты',data:rows.map(x=>x.visits),borderColor:'#4457ff',tension:.3,pointRadius:0},{label:'Пользователи',data:rows.map(x=>x.users),borderColor:'#12b76a',tension:.3,pointRadius:0},{label:'Просмотры',data:rows.map(x=>x.pageviews),borderColor:'#f79009',tension:.3,pointRadius:0}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const devices=state.devices.slice(0,8); chart('deviceChart','doughnut',{labels:devices.map(x=>x.name),datasets:[{data:devices.map(x=>x.visits),backgroundColor:['#4457ff','#12b76a','#f79009','#2e90fa','#98a2b3']}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    document.getElementById('sourcesTable').innerHTML=state.sources.length?state.sources.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong></td><td>${fmt.format(x.visits)}</td><td>${fmt.format(x.users||0)}</td><td>${pct(x.bounce)}</td><td>${fmt.format(x.conversions||0)}</td><td>${pct(x.visits?num(x.conversions)/num(x.visits)*100:0)}</td></tr>`).join(''):`<tr><td colspan="6" class="empty-cell">Нет данных.</td></tr>`;
+    const regions=state.regions.slice(0,10), max=Math.max(1,...regions.map(x=>num(x.visits))); document.getElementById('regionList').innerHTML=regions.length?regions.map(x=>`<div class="rank-row"><div><strong>${escapeHtml(x.name)}</strong><span>${fmt.format(x.visits)} визитов</span></div><div class="rank-bar"><i style="width:${Math.max(3,num(x.visits)/max*100)}%"></i></div></div>`).join(''):`<div class="empty-state">Нет данных по регионам.</div>`;
+    document.getElementById('goalsTable').innerHTML=state.goals.length?state.goals.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong></td><td>${escapeHtml(x.type||'—')}</td><td>${fmt.format(x.reaches||0)}</td><td>${fmt.format(x.visits||0)}</td><td>${pct(x.conversionRate)}</td></tr>`).join(''):`<tr><td colspan="5" class="empty-cell">Цели пока не получены из Метрики.</td></tr>`;
+    document.getElementById('pagesTable').innerHTML=state.pages.length?state.pages.map(x=>{const signal=num(x.bounce)>35?statusPill('Проверить','warn'):num(x.conversions)>0?statusPill('Конвертирует','good'):statusPill('Наблюдать','info');return `<tr><td><strong>${escapeHtml(x.title||x.page)}</strong><div class="muted">${escapeHtml(x.page)}</div></td><td>${fmt.format(x.visits)}</td><td>${fmt.format(x.users||0)}</td><td>${pct(x.bounce)}</td><td>${num(x.depth).toFixed(2)}</td><td>${duration(x.duration)}</td><td>${fmt.format(x.conversions||0)}</td><td>${signal}</td></tr>`}).join(''):`<tr><td colspan="8" class="empty-cell">Нет данных по страницам входа.</td></tr>`;
   }
 
+  const problemNames={NO_SITEMAPS:'Нет Sitemap',DISALLOWED_IN_ROBOTS:'Сайт закрыт в robots.txt',DNS_ERROR:'Ошибка DNS',MAIN_PAGE_ERROR:'Ошибка главной страницы',THREATS:'Проблемы безопасности',SLOW_AVG_RESPONSE_TIME:'Медленный ответ сервера',SSL_CERTIFICATE_ERROR:'Ошибка SSL',DOCUMENTS_MISSING_DESCRIPTION:'На многих страницах нет Description',DOCUMENTS_MISSING_TITLE:'На многих страницах нет Title',ERROR_IN_ROBOTS_TXT:'Ошибки robots.txt',ERRORS_IN_SITEMAPS:'Ошибки Sitemap',MAIN_MIRROR_IS_NOT_HTTPS:'Главное зеркало не HTTPS',NO_METRIKA_COUNTER:'Проблема счётчика Метрики',NO_REGIONS:'Не задан регион сайта',NOT_MOBILE_FRIENDLY:'Проблемы мобильной версии'};
+  function seoPlan(){
+    const items=[]; const fatal=state.seoProblems.filter(x=>x.state==='PRESENT'&&['FATAL','CRITICAL'].includes(x.severity)); if(fatal.length)items.push({level:'high',title:'1. Технические ошибки',text:`Исправить ${fatal.length} критических проблем из Вебмастера до контентных работ.`,action:fatal.map(x=>problemNames[x.code]||x.code).slice(0,3).join(' · ')});
+    const lowCtr=state.seo.filter(x=>num(x.shows)>300&&num(x.ctr)<2).sort((a,b)=>b.shows-a.shows); if(lowCtr.length)items.push({level:'high',title:'2. Сниппеты с низким CTR',text:`${lowCtr.length} запросов получают показы, но CTR ниже 2%.`,action:`Начать с: ${lowCtr.slice(0,3).map(x=>x.query).join(' · ')}`});
+    const near=state.seo.filter(x=>num(x.position)>=5&&num(x.position)<=15&&num(x.shows)>100).sort((a,b)=>b.shows-a.shows); if(near.length)items.push({level:'medium',title:'3. Страницы рядом с ТОП-5',text:`${near.length} запросов уже находятся на позициях 5–15.`,action:'Усилить соответствие интенту, текст, FAQ и внутренние ссылки.'});
+    const falling=state.seo.filter(x=>num(x.delta)<-1).sort((a,b)=>a.delta-b.delta); if(falling.length)items.push({level:'medium',title:'4. Вернуть просевшие позиции',text:`${falling.length} запросов заметно снизились относительно предыдущего периода.`,action:`Проверить: ${falling.slice(0,3).map(x=>x.query).join(' · ')}`});
+    if(!items.length&&state.seo.length)items.push({level:'low',title:'Мониторинг и расширение семантики',text:'Критичных проблем по доступным данным не видно.',action:'Расширять страницы под новые запросы и еженедельно отслеживать CTR/позиции.'});
+    return items;
+  }
   function renderSeo(){
-    const s=summarizeSeo(); renderMetricGrid('seoMetrics',[
-      {title:'Показы',value:fmt.format(s.shows),note:'по отслеживаемым запросам'},{title:'Клики',value:fmt.format(s.clicks),note:`CTR ${pct(s.ctr)}`},{title:'Средняя позиция',value:s.avgPosition.toFixed(1).replace('.',','),note:'по выборке'},{title:'Динамика',value:`+${s.growing} / −${s.falling}`,note:'растут / падают'}
+    const s=seoSummary(); renderMetricGrid('seoMetrics',[
+      {title:'Показы в поиске',value:s?fmt.format(s.shows):'—',note:'по запросам Вебмастера'}, {title:'Клики из поиска',value:s?fmt.format(s.clicks):'—',note:s?`CTR ${pct(s.ctr)}`:'нет данных'}, {title:'Средняя позиция',value:s?num(s.position).toFixed(1):'—',note:'по доступным запросам'}, {title:'Страниц в поиске',value:s&&s.searchablePages!==undefined?fmt.format(s.searchablePages):'—',note:'Вебмастер'},
+      {title:'Исключено страниц',value:s&&s.excludedPages!==undefined?fmt.format(s.excludedPages):'—',note:'не участвуют в поиске'}, {title:'ИКС',value:s&&s.sqi!==undefined?fmt.format(s.sqi):'—',note:'качество сайта'}, {title:'Критические проблемы',value:s?fmt.format(num(s.fatal)+num(s.critical)):'—',note:'Fatal + Critical'}, {title:'Рекомендации Вебмастера',value:s?fmt.format(num(s.recommendation)+num(s.possible)):'—',note:'возможные проблемы'}
     ]);
-    const sorted=[...state.seo].sort((a,b)=>b.shows-a.shows); chart('seoChart','bar',{labels:sorted.map(x=>x.query.length>24?x.query.slice(0,22)+'…':x.query),datasets:[{label:'Показы',data:sorted.map(x=>x.shows),backgroundColor:'#d6dcff',borderRadius:8},{label:'Клики',data:sorted.map(x=>x.clicks*8),backgroundColor:'#4457ff',borderRadius:8}]},{plugins:{legend:{display:true,position:'bottom'}},scales:{x:{grid:{display:false},ticks:{color:'#98a2b3',maxRotation:0,minRotation:0}},y:{grid:{color:'#eef0f3'},ticks:{color:'#98a2b3'}}}});
-    const opp=state.seo.filter(x=>x.position>=5&&x.position<=15&&x.shows>700).sort((a,b)=>(b.shows*(1-b.ctr/100))-(a.shows*(1-a.ctr/100))).slice(0,4).map(x=>({level:x.position<10?'low':'medium',title:x.query,text:`${fmt.format(x.shows)} показов · позиция ${x.position.toFixed(1)} · CTR ${pct(x.ctr)}`,action:x.ctr<2?'Сначала улучшить сниппет и соответствие интенту.':'Усилить страницу внутренними ссылками и контентом.'}));
-    document.getElementById('seoOpportunities').innerHTML=opp.map(issueHtml).join('');
+    const idx=state.seoIndex; chart('seoIndexChart','line',{labels:idx.map(x=>ruDate(x.date)),datasets:[{label:'Страницы в поиске',data:idx.map(x=>x.pagesInSearch),borderColor:'#4457ff',backgroundColor:'rgba(68,87,255,.08)',fill:true,tension:.3,pointRadius:0}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const probs=state.seoProblems.filter(x=>x.state==='PRESENT'); document.getElementById('seoProblems').innerHTML=probs.length?probs.map(x=>issueHtml({level:['FATAL','CRITICAL'].includes(x.severity)?'high':x.severity==='POSSIBLE_PROBLEM'?'medium':'low',title:problemNames[x.code]||x.code,text:`Уровень: ${x.severity}. Последнее изменение: ${x.lastUpdate?new Date(x.lastUpdate).toLocaleDateString('ru-RU'):'—'}.`,action:'Исправить проблему и повторно проверить Вебмастер.'})).join(''):`<div class="empty-state">${state.seoSummary?'Активных проблем Вебмастер не вернул.':'Нет данных диагностики.'}</div>`;
+    document.getElementById('seoPlan').innerHTML=seoPlan().map((x,i)=>`<article class="plan-card ${x.level}"><span class="plan-number">${i+1}</span><div><strong>${escapeHtml(x.title.replace(/^\d+\.\s*/,''))}</strong><p>${escapeHtml(x.text)}</p><span>${escapeHtml(x.action)}</span></div></article>`).join('')||'<div class="empty-state">Подключите Вебмастер, чтобы построить план изменений по реальным данным.</div>';
+    const sorted=[...state.seo].sort((a,b)=>b.shows-a.shows).slice(0,12); chart('seoChart','bar',{labels:sorted.map(x=>x.query.length>22?x.query.slice(0,20)+'…':x.query),datasets:[{label:'Показы',data:sorted.map(x=>x.shows),backgroundColor:'#d6dcff',borderRadius:7},{label:'Клики × 10',data:sorted.map(x=>x.clicks*10),backgroundColor:'#4457ff',borderRadius:7}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const opp=state.seo.filter(x=>num(x.position)>=5&&num(x.position)<=15&&num(x.shows)>100).sort((a,b)=>b.shows-a.shows).slice(0,5); document.getElementById('seoOpportunities').innerHTML=opp.length?opp.map(x=>issueHtml({level:num(x.position)>10?'medium':'low',title:x.query,text:`${fmt.format(x.shows)} показов · позиция ${num(x.position).toFixed(1)} · CTR ${pct(x.ctr)}`,action:num(x.ctr)<2?'Сначала улучшить Title/Description и соответствие интенту.':'Усилить страницу внутренними ссылками и контентом.'})).join(''):'<div class="empty-state">Пока нет запросов с заметным потенциалом в диапазоне 5–15.</div>';
     renderSeoTable();
   }
-  function seoPriority(x){const score=(x.shows/500)+(15-x.position)+(3-x.ctr);return score>15?['Высокий','bad']:score>9?['Средний','warn']:['Низкий','info'];}
-  function renderSeoTable(){
-    const q=(document.getElementById('seoSearch')?.value||'').trim().toLowerCase();
-    document.getElementById('seoTable').innerHTML=[...state.seo].filter(x=>x.query.toLowerCase().includes(q)).sort((a,b)=>b.shows-a.shows).map(x=>{const pr=seoPriority(x);return `<tr><td><strong>${escapeHtml(x.query)}</strong></td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${x.position.toFixed(1)}</td><td class="${x.delta>0?'num-good':'num-bad'}">${x.delta>0?'+':''}${x.delta.toFixed(1)}</td><td>${statusPill(pr[0],pr[1])}</td></tr>`}).join('');
-  }
+  function renderSeoTable(){const q=(document.getElementById('seoSearch')?.value||'').toLowerCase().trim();const rows=state.seo.filter(x=>String(x.query).toLowerCase().includes(q)).sort((a,b)=>b.shows-a.shows);document.getElementById('seoTable').innerHTML=rows.length?rows.map(x=>{const score=num(x.shows)*(Math.max(0,16-num(x.position)))*(Math.max(.25,3-num(x.ctr)));const pr=score>15000?['Высокий','bad']:score>5000?['Средний','warn']:['Низкий','info'];return `<tr><td><strong>${escapeHtml(x.query)}</strong></td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${num(x.position).toFixed(1)}</td><td class="${num(x.delta)>=0?'num-good':'num-bad'}">${num(x.delta)>0?'+':''}${num(x.delta).toFixed(1)}</td><td>${statusPill(pr[0],pr[1])}</td></tr>`}).join(''):`<tr><td colspan="7" class="empty-cell">Нет запросов.</td></tr>`;}
 
+  function normalizeAdStatus(x){const s=String(x||'').toLowerCase();if(['on','active','активна','активная','работает'].some(k=>s.includes(k)))return ['Активна','good'];if(['suspended','paused','останов','приостанов'].some(k=>s.includes(k)))return ['Остановлена','warn'];if(['inactive','off','неактив'].some(k=>s.includes(k)))return ['Неактивна','warn'];if(['ended','archived','заверш','архив'].some(k=>s.includes(k)))return ['Завершена','info'];return [x&&x!=='unknown'?String(x):'Неизвестно','info'];}
   function renderAds(){
-    const a=summarizeAds(); renderMetricGrid('adsMetrics',[
-      {title:'Расход',value:money.format(a.spend),note:'все кампании'},{title:'Клики',value:fmt.format(a.clicks),note:`CTR ${pct(a.ctr)}`},{title:'CPC',value:money.format(a.cpc),note:'средняя цена клика'},{title:'Конверсии',value:fmt.format(a.conversions),note:`CPA ${money.format(a.cpa)}`}
+    const days=num(document.getElementById('periodSelect').value||30); const channels=['Все','Яндекс Директ','VK Реклама','Дзен']; document.getElementById('adChannelTabs').innerHTML=channels.map(c=>`<button class="channel-tab ${adChannelFilter===c?'active':''}" data-ad-channel="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');document.querySelectorAll('[data-ad-channel]').forEach(b=>b.addEventListener('click',()=>{adChannelFilter=b.dataset.adChannel;renderAds();}));
+    const campaigns=aggregateAds(days,adChannelFilter); const t=adTotals(campaigns); const has=campaigns.length>0||state.adsDaily.some(x=>inPeriod(x.date,days)&&(adChannelFilter==='Все'||x.channel===adChannelFilter));
+    renderMetricGrid('adsMetrics',[
+      {title:'Расход',value:has?money.format(t.spend):'—',note:`за ${days} дней`},{title:'Показы',value:has?fmt.format(t.impressions):'—',note:'рекламные показы'},{title:'Клики',value:has?fmt.format(t.clicks):'—',note:has?`CTR ${pct(t.impressions?t.clicks/t.impressions*100:0)}`:'нет данных'},{title:'CPC',value:has&&t.clicks?money.format(t.spend/t.clicks):'—',note:'стоимость клика'},
+      {title:'Конверсии',value:has?fmt.format(t.conversions):'—',note:has?`CVR ${pct(t.clicks?t.conversions/t.clicks*100:0)}`:'нет данных'},{title:'CPA',value:has&&t.conversions?money.format(t.spend/t.conversions):'—',note:'стоимость конверсии'},{title:'Активные кампании',value:fmt.format(campaigns.filter(x=>normalizeAdStatus(x.status)[0]==='Активна').length),note:'по выбранному каналу'},{title:'Остановленные',value:fmt.format(campaigns.filter(x=>normalizeAdStatus(x.status)[0]==='Остановлена').length),note:'сохраняются как история'}
     ]);
-    const d=periodData(state.adsDaily,Math.min(30,Number(document.getElementById('periodSelect').value||30))); chart('adsChart','line',{labels:d.map(x=>ruDate(x.date)),datasets:[{label:'Расход',data:d.map(x=>x.spend),borderColor:'#f79009',backgroundColor:'rgba(247,144,9,.09)',fill:true,tension:.3,pointRadius:0},{label:'Конверсии × 400',data:d.map(x=>x.conversions*400),borderColor:'#12b76a',backgroundColor:'transparent',tension:.3,pointRadius:0}]},{plugins:{legend:{display:true,position:'bottom'}}});
-    const diagnostics=[...state.ads].map(x=>({...x,ctr:x.impressions?x.clicks/x.impressions*100:0,cpa:x.conversions?x.spend/x.conversions:Infinity})).sort((a,b)=>b.cpa-a.cpa).slice(0,3).map(x=>({level:x.cpa>5000?'high':x.cpa>3000?'medium':'low',title:x.name,text:`CTR ${pct(x.ctr)} · расход ${money.format(x.spend)} · ${isFinite(x.cpa)?`CPA ${money.format(x.cpa)}`:'конверсий нет'}`,action:x.cpa>5000?'Не масштабировать. Проверить оффер, аудиторию и посадочную.':x.ctr<1?'Сначала поднять кликабельность креатива.':'Кампания выглядит рабочей — оптимизировать постепенно.'})); document.getElementById('adsIssues').innerHTML=diagnostics.map(issueHtml).join('');
-    document.getElementById('adsTable').innerHTML=state.ads.map(x=>{const ctr=x.impressions?x.clicks/x.impressions*100:0,cpc=x.clicks?x.spend/x.clicks:0,cpa=x.conversions?x.spend/x.conversions:Infinity;const st=cpa<2500?['Сильная','good']:cpa<4500?['Наблюдать','warn']:['Проблема','bad'];return `<tr><td><strong>${escapeHtml(x.name)}</strong></td><td>${fmt.format(x.impressions)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(ctr)}</td><td>${money.format(x.spend)}</td><td>${money.format(cpc)}</td><td>${x.conversions}</td><td>${isFinite(cpa)?money.format(cpa):'—'}</td><td>${statusPill(st[0],st[1])}</td></tr>`}).join('');
+    const daily=(state.adsDaily||[]).filter(x=>inPeriod(x.date,days)&&(adChannelFilter==='Все'||x.channel===adChannelFilter));const dm=new Map();daily.forEach(x=>{const v=dm.get(x.date)||{date:x.date,spend:0,clicks:0,conv:0};v.spend+=num(x.spend);v.clicks+=num(x.clicks);v.conv+=num(x.conversions);dm.set(x.date,v)});const d=[...dm.values()].sort((a,b)=>a.date.localeCompare(b.date));chart('adsChart','line',{labels:d.map(x=>ruDate(x.date)),datasets:[{label:'Расход, ₽',data:d.map(x=>x.spend),borderColor:'#4457ff',tension:.3,pointRadius:0},{label:'Клики',data:d.map(x=>x.clicks),borderColor:'#2e90fa',tension:.3,pointRadius:0},{label:'Конверсии × 10',data:d.map(x=>x.conv*10),borderColor:'#12b76a',tension:.3,pointRadius:0}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const issues=[];campaigns.filter(x=>normalizeAdStatus(x.status)[0]==='Активна').forEach(x=>{if(x.spend>0&&x.conversions===0)issues.push({level:'high',title:`${x.name}: расход без конверсий`,text:`Потрачено ${money.format(x.spend)}, кликов ${fmt.format(x.clicks)}.`,action:'Проверить цели, поисковые запросы/аудитории, посадочную и ставки.'});else if(x.ctr<1&&x.impressions>1000)issues.push({level:'medium',title:`${x.name}: низкий CTR`,text:`CTR ${pct(x.ctr)} при ${fmt.format(x.impressions)} показах.`,action:'Проверить креатив, оффер и соответствие аудитории.'});});document.getElementById('adsIssues').innerHTML=issues.length?issues.slice(0,6).map(issueHtml).join(''):`<div class="empty-state">${campaigns.length?'Явных проблем у активных кампаний по доступным данным нет.':'Нет рекламных данных. Direct подтянется по API; VK и Дзен можно импортировать.'}</div>`;
+    document.getElementById('adsTable').innerHTML=campaigns.length?campaigns.sort((a,b)=>b.spend-a.spend).map(x=>{const st=normalizeAdStatus(x.status);return `<tr><td>${statusPill(x.channel||'Реклама','info')}</td><td><strong>${escapeHtml(x.name)}</strong></td><td>${statusPill(st[0],st[1])}</td><td>${fmt.format(x.impressions)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${money.format(x.spend)}</td><td>${x.clicks?money.format(x.cpc):'—'}</td><td>${fmt.format(x.conversions)}</td><td>${pct(x.cvr)}</td><td>${x.cpa===null?'—':money.format(x.cpa)}</td></tr>`}).join(''):`<tr><td colspan="11" class="empty-cell">Нет кампаний по выбранному каналу.</td></tr>`;
   }
 
   function renderSocial(){
-    const s=summarizeSocial(); const channels=[...new Set(state.social.map(x=>x.channel))]; renderMetricGrid('socialMetrics',[
-      {title:'Охват',value:fmt.format(s.reach),note:'сумма по публикациям'},{title:'Реакции',value:fmt.format(s.reactions),note:`ER ${pct(s.er)}`},{title:'Публикации',value:fmt.format(s.posts),note:'в выборке'},{title:'Каналы',value:fmt.format(channels.length),note:channels.join(' · ')}
+    const days=num(document.getElementById('periodSelect').value||30), s=socialSummary(days), rows=socialRows(days);renderMetricGrid('socialMetrics',[
+      {title:'Публикации',value:s?fmt.format(s.posts):'—',note:`за ${days} дней`},{title:'Охват',value:s?fmt.format(s.reach):'—',note:'суммарный по публикациям'},{title:'Просмотры',value:s?fmt.format(s.views):'—',note:'если канал отдаёт показатель'},{title:'Вовлечения',value:s?fmt.format(s.engagements):'—',note:s?`ER ${pct(s.er)}`:'нет данных'},
+      {title:'Клики',value:s?fmt.format(s.clicks):'—',note:'переходы из постов'},{title:'Подписчики',value:s&&s.followers?fmt.format(s.followers):'—',note:'последнее значение по каналам'},{title:'Δ подписчиков',value:s?`${s.followersDelta>0?'+':''}${fmt.format(s.followersDelta)}`:'—',note:'по доступным данным'},{title:'ER',value:s?pct(s.er):'—',note:'реакции + комментарии + репосты / охват'}
     ]);
-    chart('socialChart','bar',{labels:channels,datasets:[{data:channels.map(c=>sum(state.social.filter(x=>x.channel===c),'reach')),backgroundColor:['#4457ff','#12b76a','#f79009','#2e90fa','#98a2b3'],borderRadius:9}]});
-    const top=[...state.social].map(x=>({...x,er:x.reach?x.reactions/x.reach*100:0})).sort((a,b)=>b.er-a.er).slice(0,3).map(x=>({level:'low',title:x.title,text:`${x.channel}: охват ${fmt.format(x.reach)}, ER ${pct(x.er)}.`,action:x.er>7?'Формат даёт сильную вовлечённость — стоит сделать серию.':'Сохранить тему, но усилить подачу и CTA.'})); document.getElementById('contentInsights').innerHTML=top.map(issueHtml).join('');
-    document.getElementById('socialTable').innerHTML=[...state.social].sort((a,b)=>b.date.localeCompare(a.date)).map(x=>{const er=x.reach?x.reactions/x.reach*100:0;return `<tr><td>${statusPill(x.channel,'info')}</td><td><strong>${escapeHtml(x.title)}</strong></td><td>${ruDate(x.date)}</td><td>${fmt.format(x.reach)}</td><td>${fmt.format(x.reactions)}</td><td>${pct(er)}</td><td>${er>7?statusPill('Сильный','good'):er>3?statusPill('Норма','info'):statusPill('Слабый','warn')}</td></tr>`}).join('');
+    const channels=[...new Set(rows.map(x=>x.channel))];chart('socialChart','bar',{labels:channels,datasets:[{label:'Охват',data:channels.map(c=>sum(rows.filter(x=>x.channel===c),'reach')),backgroundColor:'#4457ff',borderRadius:8},{label:'Просмотры',data:channels.map(c=>sum(rows.filter(x=>x.channel===c),'views')),backgroundColor:'#b8c0ff',borderRadius:8}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const top=[...rows].map(x=>({...x,er:x.reach?(num(x.reactions)+num(x.comments)+num(x.shares))/x.reach*100:0})).sort((a,b)=>b.er-a.er).slice(0,4);document.getElementById('contentInsights').innerHTML=top.length?top.map(x=>issueHtml({level:'low',title:x.title,text:`${x.channel}: охват ${fmt.format(x.reach)}, ER ${pct(x.er)}, клики ${fmt.format(x.clicks||0)}.`,action:x.er>=5?'Сохранить тему и механику — формат хорошо вовлекает.':'Сравнить хук, формат и CTA с более сильными постами.'})).join(''):'<div class="empty-state">Импортируйте статистику публикаций, чтобы сравнивать форматы.</div>';
+    document.getElementById('socialTable').innerHTML=rows.length?[...rows].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=>{const er=x.reach?(num(x.reactions)+num(x.comments)+num(x.shares))/x.reach*100:0;return `<tr><td>${statusPill(x.channel||'Канал','info')}</td><td><strong>${escapeHtml(x.title||'Публикация')}</strong></td><td>${ruDate(x.date)}</td><td>${fmt.format(x.reach||0)}</td><td>${fmt.format(x.views||0)}</td><td>${fmt.format(x.reactions||0)}</td><td>${fmt.format(x.comments||0)}</td><td>${fmt.format(x.shares||0)}</td><td>${fmt.format(x.clicks||0)}</td><td>${pct(er)}</td></tr>`}).join(''):`<tr><td colspan="10" class="empty-cell">Нет данных соцсетей.</td></tr>`;
   }
 
   function renderEmail(){
-    const e=summarizeEmail(); renderMetricGrid('emailMetrics',[
-      {title:'Отправлено',value:fmt.format(e.sent),note:'по доступным рассылкам'},{title:'Open Rate',value:pct(e.openRate),note:'открытия / отправки'},{title:'CTR',value:pct(e.ctr),note:'клики / отправки'},{title:'Отписки',value:pct(e.unsubRate,2),note:`${fmt.format(e.unsub)} человек`}
+    const days=num(document.getElementById('periodSelect').value||30), e=emailSummary(days), rows=emailRows(days);renderMetricGrid('emailMetrics',[
+      {title:'Отправлено',value:e?fmt.format(e.sent):'—',note:`за ${days} дней`},{title:'Доставлено',value:e?fmt.format(e.delivered):'—',note:e?`Delivery Rate ${pct(e.deliveryRate)}`:'нет данных'},{title:'Open Rate',value:e?pct(e.openRate):'—',note:e?`${fmt.format(e.opened)} уникальных открытий`:'нет данных'},{title:'CTR',value:e?pct(e.ctr):'—',note:e?`${fmt.format(e.clicked)} уникальных кликов`:'нет данных'},
+      {title:'Ошибки доставки',value:e?fmt.format(e.errors):'—',note:'sent − delivered'},{title:'Отписки',value:e?fmt.format(e.unsub):'—',note:e?pct(e.unsubRate,2):'нет данных'},{title:'Жалобы на спам',value:e?fmt.format(e.spam):'—',note:'по данным UniSender'},{title:'Клики',value:e?fmt.format(e.clicked):'—',note:'уникальные переходы'}
     ]);
-    const campaigns=[...state.email].sort((a,b)=>a.date.localeCompare(b.date)); chart('emailChart','line',{labels:campaigns.map(x=>ruDate(x.date)),datasets:[{label:'Open rate',data:campaigns.map(x=>x.sent?x.opened/x.sent*100:0),borderColor:'#4457ff',tension:.3},{label:'CTR',data:campaigns.map(x=>x.sent?x.clicked/x.sent*100:0),borderColor:'#12b76a',tension:.3}]},{plugins:{legend:{display:true,position:'bottom'}}});
-    const issues=[]; if(e.openRate<25)issues.push({level:'medium',title:'Открываемость можно поднять',text:`Среднее значение ${pct(e.openRate)}.`,action:'Тестировать тему, прехедер и сегментацию базы.'}); if(e.unsubRate>.5)issues.push({level:'high',title:'Слишком много отписок',text:`Отписки ${pct(e.unsubRate,2)}.`,action:'Проверить частоту отправок и релевантность сегмента.'}); issues.push({level:'low',title:'Лучший сценарий рассылки',text:'Сравнивай тему письма, открываемость и клики вместе — высокий Open Rate без кликов не означает хороший результат.',action:'В отчёте ориентироваться на переходы и бизнес-конверсии.'}); document.getElementById('emailIssues').innerHTML=issues.map(issueHtml).join('');
-    document.getElementById('emailTable').innerHTML=[...state.email].sort((a,b)=>b.date.localeCompare(a.date)).map(x=>{const or=x.sent?x.opened/x.sent*100:0,ctr=x.sent?x.clicked/x.sent*100:0;return `<tr><td><strong>${escapeHtml(x.name)}</strong><div class="muted">${ruDate(x.date)}</div></td><td>${fmt.format(x.sent)}</td><td>${pct(or)}</td><td>${pct(ctr)}</td><td>${x.unsub}</td><td>${x.errors}</td><td>${or>28&&ctr>4?statusPill('Сильная','good'):or<22?statusPill('Слабая','warn'):statusPill('Норма','info')}</td></tr>`}).join('');
+    const sorted=[...rows].sort((a,b)=>String(a.date).localeCompare(String(b.date)));chart('emailChart','line',{labels:sorted.map(x=>ruDate(x.date)),datasets:[{label:'Open Rate',data:sorted.map(x=>x.delivered?num(x.opened)/num(x.delivered)*100:0),borderColor:'#4457ff',tension:.3},{label:'CTR',data:sorted.map(x=>x.delivered?num(x.clicked)/num(x.delivered)*100:0),borderColor:'#12b76a',tension:.3}]},{plugins:{legend:{display:true,position:'bottom'}}});
+    const issues=[];if(e){if(e.deliveryRate<95)issues.push({level:'medium',title:'Доставляемость ниже 95%',text:`Delivery Rate ${pct(e.deliveryRate)}.`,action:'Проверить качество базы и причины недоставок.'});if(e.unsubRate>.5)issues.push({level:'high',title:'Повышенные отписки',text:`Отписки ${pct(e.unsubRate,2)}.`,action:'Проверить частоту отправок, сегментацию и соответствие ожиданиям базы.'});if(e.openRate>0&&e.ctr<1)issues.push({level:'medium',title:'Открывают, но мало переходят',text:`Open Rate ${pct(e.openRate)}, CTR ${pct(e.ctr)}.`,action:'Усилить содержание письма, оффер и CTA.'});}document.getElementById('emailIssues').innerHTML=issues.length?issues.map(issueHtml).join(''):`<div class="empty-state">${e?'Явных проблем по агрегатам нет.':'Добавьте UNISENDER_API_KEY, чтобы получать статистику автоматически.'}</div>`;
+    document.getElementById('emailTable').innerHTML=rows.length?[...rows].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=>{const or=x.delivered?num(x.opened)/num(x.delivered)*100:0,ctr=x.delivered?num(x.clicked)/num(x.delivered)*100:0;const cls=or>=25&&ctr>=2?'good':or<15?'warn':'info';return `<tr><td><strong>${escapeHtml(x.name)}</strong></td><td>${ruDate(x.date)}</td><td>${fmt.format(x.sent||0)}</td><td>${fmt.format(x.delivered||0)}</td><td>${pct(or)}</td><td>${pct(ctr)}</td><td>${fmt.format(x.errors||0)}</td><td>${fmt.format(x.unsub||0)}</td><td>${fmt.format(x.spam||0)}</td><td>${statusPill(cls==='good'?'Сильная':cls==='warn'?'Проверить':'Норма',cls)}</td></tr>`}).join(''):`<tr><td colspan="10" class="empty-cell">Нет данных рассылок.</td></tr>`;
   }
 
-  function renderTasks(){
-    document.getElementById('taskList').innerHTML=state.tasks.sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-({high:0,medium:1,low:2}[b.priority]))).map(x=>`<div class="task-item ${x.done?'done':''}"><input class="task-check" type="checkbox" data-task="${escapeHtml(x.id)}" ${x.done?'checked':''}/><div><div class="task-title">${escapeHtml(x.title)}</div><div class="task-meta">${escapeHtml(x.source||'Своя задача')}</div></div><span class="priority ${x.priority}">${x.priority==='high'?'Высокий':x.priority==='medium'?'Средний':'Низкий'}</span></div>`).join('');
-    const top=state.tasks.filter(x=>!x.done).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]-{high:0,medium:1,low:2}[b.priority])).slice(0,4); document.getElementById('focusSteps').innerHTML=top.map(x=>`<li>${escapeHtml(x.title)}</li>`).join('');
-    document.querySelectorAll('[data-task]').forEach(el=>el.addEventListener('change',e=>{const t=state.tasks.find(x=>x.id===e.target.dataset.task);if(t){t.done=e.target.checked;saveState();renderTasks();}}));
+  function autoTasks(){
+    const tasks=[];getOverviewIssues(num(document.getElementById('periodSelect').value||30)).forEach((x,i)=>tasks.push({id:`auto-overview-${i}`,title:x.action||x.title,priority:x.level==='high'?'high':x.level==='medium'?'medium':'low',source:'Автодиагностика'}));seoPlan().forEach((x,i)=>tasks.push({id:`auto-seo-${i}`,title:x.action||x.title,priority:x.level==='high'?'high':x.level==='medium'?'medium':'low',source:'SEO'}));
+    const ads=aggregateAds(num(document.getElementById('periodSelect').value||30));ads.filter(x=>normalizeAdStatus(x.status)[0]==='Активна'&&x.spend>0&&x.conversions===0).slice(0,3).forEach((x,i)=>tasks.push({id:`auto-ads-${i}`,title:`Разобрать кампанию «${x.name}»: расход есть, конверсий нет`,priority:'high',source:'Реклама'}));return tasks;
   }
+  function renderTasks(){const items=[...autoTasks(),...(local.manualTasks||[])];const done=local.doneTasks||{};const order={high:0,medium:1,low:2};items.sort((a,b)=>order[a.priority]-order[b.priority]);document.getElementById('taskList').innerHTML=items.length?items.map(x=>`<div class="task-item ${done[x.id]?'done':''}"><input class="task-check" type="checkbox" data-task="${escapeHtml(x.id)}" ${done[x.id]?'checked':''}/><div><div class="task-title">${escapeHtml(x.title)}</div><div class="task-meta">${escapeHtml(x.source||'Своя задача')}</div></div><span class="priority ${x.priority}">${x.priority==='high'?'Высокий':x.priority==='medium'?'Средний':'Низкий'}</span></div>`).join(''):'<div class="empty-state">Задач пока нет.</div>';document.getElementById('focusSteps').innerHTML=items.filter(x=>!done[x.id]).slice(0,5).map(x=>`<li>${escapeHtml(x.title)}</li>`).join('')||'<li>Критичных задач по доступным данным нет.</li>';document.querySelectorAll('[data-task]').forEach(el=>el.addEventListener('change',e=>{local.doneTasks=local.doneTasks||{};local.doneTasks[e.target.dataset.task]=e.target.checked;saveLocal();renderTasks();}));}
 
-  function renderReports(){
-    const s=summarizeSite(Number(document.getElementById('reportPeriod')?.value||30)), seo=summarizeSeo(), ads=summarizeAds(), social=summarizeSocial(), email=summarizeEmail();
-    const rows=[['Здоровье маркетинга',`${calcHealth()}/100`],['Визиты',fmt.format(s.visits)],['SEO-показы',fmt.format(seo.shows)],['Рекламные расходы',money.format(ads.spend)],['Рекламный CPA',money.format(ads.cpa)],['Охват соцсетей',fmt.format(social.reach)],['Email Open Rate',pct(email.openRate)],['Активные задачи',state.tasks.filter(x=>!x.done).length]];
-    document.getElementById('reportPreview').innerHTML=rows.map(r=>`<div class="preview-row"><span>${r[0]}</span><strong>${r[1]}</strong></div>`).join('');
-  }
+  function reportSnapshot(days){return {generatedAt:new Date().toISOString(),periodDays:days,site:siteSummary(days),seo:seoSummary(),ads:aggregateAds(days),social:socialSummary(days),email:emailSummary(days),issues:getOverviewIssues(days),seoPlan:seoPlan(),tasks:autoTasks()};}
+  function renderReports(){const d=reportSnapshot(num(document.getElementById('reportPeriod').value||30));const rows=[['Визиты',d.site?fmt.format(d.site.visits):'—'],['Заявки',d.site?fmt.format(d.site.formSubmits):'—'],['SEO-клики',d.seo?fmt.format(d.seo.clicks):'—'],['Рекламный расход',d.ads.length?money.format(adTotals(d.ads).spend):'—'],['Email CTR',d.email?pct(d.email.ctr):'—'],['Активные задачи',fmt.format(autoTasks().length)]];document.getElementById('reportPreview').innerHTML=rows.map(r=>`<div class="preview-row"><span>${r[0]}</span><strong>${r[1]}</strong></div>`).join('');}
+  function selectedSections(){return [...document.querySelectorAll('.reportCheck:checked')].map(x=>x.value);}
+  function buildReportHtml(){const days=num(document.getElementById('reportPeriod').value||30),d=reportSnapshot(days),selected=selectedSections(),title=escapeHtml(document.getElementById('reportName').value||'Маркетинговый отчёт');const k=(l,v)=>`<div class="pdf-kpi"><span>${escapeHtml(l)}</span><strong>${v}</strong></div>`;let h=`<div class="pdf-report"><h1>${title}</h1><div class="report-date">Последние ${days} дней · ${new Date().toLocaleString('ru-RU')}</div>`;if(selected.includes('overview'))h+=`<h2>Сводка</h2><div class="pdf-kpis">${k('Визиты',d.site?fmt.format(d.site.visits):'—')}${k('Заявки',d.site?fmt.format(d.site.formSubmits):'—')}${k('Email-клики',d.site?fmt.format(d.site.emailClicks):'—')}${k('SEO-клики',d.seo?fmt.format(d.seo.clicks):'—')}</div>`;if(selected.includes('site')&&d.site)h+=`<h2>Сайт</h2><p>Визиты: <strong>${fmt.format(d.site.visits)}</strong> · пользователи: <strong>${fmt.format(d.site.users)}</strong> · отказы: <strong>${pct(d.site.bounce)}</strong> · глубина: <strong>${d.site.depth.toFixed(2)}</strong> · время: <strong>${duration(d.site.duration)}</strong>.</p>`;if(selected.includes('seo')&&d.seo)h+=`<h2>SEO</h2><p>Показы: <strong>${fmt.format(d.seo.shows)}</strong> · клики: <strong>${fmt.format(d.seo.clicks)}</strong> · CTR: <strong>${pct(d.seo.ctr)}</strong> · позиция: <strong>${num(d.seo.position).toFixed(1)}</strong> · страниц в поиске: <strong>${fmt.format(d.seo.searchablePages||0)}</strong>.</p>`;if(selected.includes('ads')){const t=adTotals(d.ads);h+=`<h2>Реклама</h2><p>Расход: <strong>${money.format(t.spend)}</strong> · показы: <strong>${fmt.format(t.impressions)}</strong> · клики: <strong>${fmt.format(t.clicks)}</strong> · конверсии: <strong>${fmt.format(t.conversions)}</strong>.</p>`;}if(selected.includes('social')&&d.social)h+=`<h2>Соцсети</h2><p>Публикации: <strong>${fmt.format(d.social.posts)}</strong> · охват: <strong>${fmt.format(d.social.reach)}</strong> · ER: <strong>${pct(d.social.er)}</strong>.</p>`;if(selected.includes('email')&&d.email)h+=`<h2>Email</h2><p>Отправлено: <strong>${fmt.format(d.email.sent)}</strong> · доставлено: <strong>${fmt.format(d.email.delivered)}</strong> · Open Rate: <strong>${pct(d.email.openRate)}</strong> · CTR: <strong>${pct(d.email.ctr)}</strong>.</p>`;if(selected.includes('recommendations'))h+=`<h2>Рекомендации</h2>${[...d.issues,...d.seoPlan].map(x=>`<div class="pdf-reco"><strong>${escapeHtml(x.title)}</strong><span>${escapeHtml(x.text)} ${escapeHtml(x.action||'')}</span></div>`).join('')}`;return h+'</div>';}
+  async function downloadPdf(){const box=document.getElementById('reportCanvas');box.innerHTML=buildReportHtml();if(window.html2pdf)await html2pdf().set({margin:[9,9,9,9],filename:`cs-marketing-${iso(today)}.pdf`,image:{type:'jpeg',quality:.96},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}}).from(box.firstElementChild).save();else window.print();}
+  function downloadBlob(content,name,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
+  function downloadJson(){downloadBlob(JSON.stringify(reportSnapshot(num(document.getElementById('reportPeriod').value||30)),null,2),`cs-marketing-${iso(today)}.json`,'application/json');}
+  function downloadCsv(){const d=reportSnapshot(30),a=adTotals(d.ads);const rows=[['section','metric','value'],['site','visits',d.site?.visits??''],['site','formSubmits',d.site?.formSubmits??''],['site','emailClicks',d.site?.emailClicks??''],['seo','clicks',d.seo?.clicks??''],['ads','spend',a.spend],['ads','conversions',a.conversions],['email','ctr',d.email?.ctr??'']];downloadBlob('\uFEFF'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n'),`cs-marketing-${iso(today)}.csv`,'text/csv;charset=utf-8');}
 
   const integrations=[
-    {id:'metrika',name:'Яндекс Метрика',desc:'Визиты, посетители, отказы, глубина, источники и страницы.',server:true},
-    {id:'webmaster',name:'Яндекс Вебмастер',desc:'Поисковые запросы, показы, клики, позиции и SEO-сигналы.',server:true},
-    {id:'direct',name:'Яндекс Директ',desc:'Расходы, показы, клики, CTR, конверсии и CPA.',server:true},
-    {id:'vk',name:'VK / VK Реклама',desc:'Пока предусмотрен импорт отчётов; API-адаптер можно подключить отдельно.',server:false},
-    {id:'telegram',name:'Telegram',desc:'Импорт статистики публикаций или подключение внешнего аналитического сервиса.',server:false},
-    {id:'email',name:'UniSender / Email',desc:'Отправки, открытия, клики, ошибки и отписки через импорт/API.',server:false},
-    {id:'excel',name:'Excel / CSV',desc:'Универсальный импорт для любых данных, которых нет в API.',server:false}
+    {id:'metrika',name:'Яндекс Метрика',desc:'Трафик, источники, страницы, устройства, регионы, цели и Вебвизор.',kind:'api',setup:'YANDEX_TOKEN + SITE_URL. METRIKA_COUNTER_ID нужен только если автоопределение не сработает.'},
+    {id:'webmaster',name:'Яндекс Вебмастер',desc:'Запросы, позиции, CTR, индексация, ИКС и диагностика.',kind:'api',setup:'Тот же YANDEX_TOKEN + SITE_URL. WEBMASTER_HOST_ID — только запасной ручной идентификатор.'},
+    {id:'direct',name:'Яндекс Директ',desc:'Кампании, реальные статусы, расход, показы, клики и конверсии.',kind:'api',setup:'Отдельный DIRECT_TOKEN. Для приложения должен быть одобрен доступ к Direct API.'},
+    {id:'vkads',name:'VK Реклама',desc:'Кампании, статусы, показы, клики и расход из нового кабинета ads.vk.com.',kind:'api',setup:'VK_ADS_CLIENT_ID + VK_ADS_CLIENT_SECRET. Приложение само получает временный access token.'},
+    {id:'unisender',name:'UniSender',desc:'Рассылки, доставка, уникальные открытия, клики, отписки и жалобы.',kind:'api',setup:'UNISENDER_API_KEY из настроек «Интеграция и API».'},
+    {id:'vksocial',name:'VK — сообщество',desc:'Органический контент пока через импорт. API сообщества подключим отдельно после выбора схемы доступа.',kind:'manual',source:'social'},
+    {id:'telegram',name:'Telegram',desc:'Полная статистика канала требует MTProto-авторизацию пользователя-администратора; простого bot token недостаточно.',kind:'mtproto',source:'social'},
+    {id:'dzenads',name:'Дзен — реклама',desc:'Отдельный ручной канал. Если размещение идёт через Яндекс Директ, расходы уже попадут из Директа.',kind:'manual',source:'ads'},
+    {id:'dzensocial',name:'Дзен — публикации',desc:'Пока импорт Excel/CSV: показы, дочитывания/просмотры, реакции, клики и подписчики, если они есть в выгрузке.',kind:'manual',source:'social'},
+    {id:'maxsocial',name:'MAX',desc:'Посты канала и доступная статистика просмотров/репостов через официальный Bot API.',kind:'api',setup:'MAX_BOT_TOKEN + MAX_CHANNEL_ID. Бот должен быть администратором канала.'}
   ];
-
   function renderIntegrations(){
-    document.getElementById('integrationGrid').innerHTML=integrations.map(x=>{const st=apiStatus.integrations?.[x.id];const connected=st?.connected;const label=connected?'Подключено':x.server?'Не настроено':'Через импорт';const cls=connected?'good':x.server?'warn':'info';return `<article class="integration-card"><div class="integration-top"><div class="integration-name">${escapeHtml(x.name)}</div>${statusPill(label,cls)}</div><div class="integration-desc">${escapeHtml(x.desc)}</div><div class="integration-meta">${connected&&st.lastSync?`Последняя синхронизация: ${escapeHtml(st.lastSync)}`:x.server?'Нужны серверные secrets':'Можно использовать уже сейчас'}</div><div class="integration-actions">${x.server?`<button class="secondary-btn sync-one" data-source="${x.id}" ${connected?'':'disabled'}>Синхронизировать</button>`:`<button class="secondary-btn import-one" data-source="${x.id==='excel'?'site':x.id}">Импортировать</button>`}</div></article>`}).join('');
+    const grid=document.getElementById('integrationGrid');
+    grid.innerHTML=integrations.map(x=>{
+      const st=apiStatus.integrations?.[x.id]||{};
+      const configured=Boolean(st.configured??st.connected);
+      const last=st.lastSync?`Последняя синхронизация: ${escapeHtml(st.lastSync)}`:'';
+      const missing=Array.isArray(st.missing)&&st.missing.length?`Не хватает: ${st.missing.map(escapeHtml).join(', ')}`:'';
+      const message=st.message?escapeHtml(st.message):'';
+      let label='Ручной импорт',cls='info';
+      if(x.kind==='api'){label=configured?'Настроено':'Нужны доступы';cls=configured?'good':'warn';}
+      if(x.kind==='mtproto'){label='Отдельное подключение';cls='info';}
+      const meta=[last,missing,message].filter(Boolean).join('<br>') || escapeHtml(x.setup||'Импорт доступен уже сейчас.');
+      const actions=x.kind==='api'
+        ? `<button class="secondary-btn sync-one" data-source="${x.id}" ${configured?'':'disabled'}>Синхронизировать</button>`
+        : `<button class="secondary-btn import-one" data-source="${x.source||'social'}">Импортировать</button>`;
+      return `<article class="integration-card"><div class="integration-top"><div class="integration-name">${escapeHtml(x.name)}</div>${statusPill(label,cls)}</div><div class="integration-desc">${escapeHtml(x.desc)}</div><div class="integration-setup">${escapeHtml(x.setup||'')}</div><div class="integration-meta">${meta}</div><div class="integration-actions">${actions}</div></article>`;
+    }).join('');
     document.querySelectorAll('.sync-one').forEach(b=>b.addEventListener('click',()=>syncSource(b.dataset.source)));
-    document.querySelectorAll('.import-one').forEach(b=>b.addEventListener('click',()=>{document.getElementById('importSource').value=['telegram','vk'].includes(b.dataset.source)?'social':b.dataset.source;document.getElementById('fileInput').click();}));
+    document.querySelectorAll('.import-one').forEach(b=>b.addEventListener('click',()=>{document.getElementById('importSource').value=b.dataset.source;document.getElementById('fileInput').click();}));
+    renderCredentialChecklist();
   }
+  function renderCredentialChecklist(){
+    const el=document.getElementById('credentialChecklist'); if(!el)return;
+    const rows=[
+      ['SITE_URL','Variable','https://www.cs-trade.ru/','Нужна для автоопределения счётчика Метрики и сайта Вебмастера.'],
+      ['YANDEX_TOKEN','Secret','OAuth token','Один токен можно использовать для Метрики и Вебмастера, если при выдаче есть оба доступа.'],
+      ['METRIKA_COUNTER_ID','Variable','необязательно','Только если SITE_URL не смог однозначно выбрать счётчик.'],
+      ['WEBMASTER_HOST_ID','Variable','необязательно','Только если SITE_URL не смог однозначно выбрать хост.'],
+      ['DIRECT_TOKEN','Secret','OAuth token','Директ использует отдельный токен приложения с одобренным доступом к API.'],
+      ['DIRECT_CLIENT_LOGIN','Variable','необязательно','Нужен в основном для агентского доступа к клиентскому кабинету.'],
+      ['VK_ADS_CLIENT_ID','Variable','ID из VK Рекламы','Идентификатор API-клиента.'],
+      ['VK_ADS_CLIENT_SECRET','Secret','секрет из VK Рекламы','Хранить только как Secret. Worker сам получает access token.'],
+      ['VK_ADS_TOKEN','Secret','необязательно','Запасной вариант: готовый access token вместо client_id/client_secret.'],
+      ['MAX_BOT_TOKEN','Secret','токен бота MAX','Бот должен быть администратором канала, чтобы читать посты через API.'],
+      ['MAX_CHANNEL_ID','Variable','ID канала MAX','Канал, статистику которого загружает приложение.'],
+      ['UNISENDER_API_KEY','Secret','API key','Ключ доступа к статистике рассылок.']
+    ];
+    el.innerHTML=rows.map(r=>`<tr><td><code>${r[0]}</code></td><td>${statusPill(r[1],r[1]==='Secret'?'warn':'info')}</td><td>${escapeHtml(r[2])}</td><td>${escapeHtml(r[3])}</td></tr>`).join('');
+  }
+  async function fetchApiStatus(){try{const r=await apiFetch('/api/status',{headers:{Accept:'application/json'}});if(!r.ok)throw new Error('status');apiStatus=await r.json();const connected=Object.values(apiStatus.integrations||{}).filter(x=>x.connected).length;document.getElementById('syncDot').className=`dot ${connected?'live':'warn'}`;document.getElementById('syncText').textContent=connected?`API настроено: ${connected}`:'API пока не настроены';}catch{apiStatus={mode:'empty',integrations:{}};document.getElementById('syncDot').className='dot warn';document.getElementById('syncText').textContent='Нет связи с API';}renderIntegrations();renderOverview();}
+  async function syncSource(source){showAlert(`Синхронизирую ${source}…`);try{const r=await apiFetch(`/api/sync/${source}`,{method:'POST'});const out=await r.json();if(!r.ok)throw new Error(out.error||'Ошибка синхронизации');showAlert(out.message||'Данные обновлены','success');await loadLiveData();await fetchApiStatus();}catch(e){showAlert(e.message||'Не удалось синхронизировать','error');}}
+  async function syncAll(){const connected=Object.entries(apiStatus.integrations||{}).filter(([,v])=>v.connected).map(([k])=>k).filter(k=>['metrika','webmaster','direct','vkads','unisender','maxsocial'].includes(k));if(!connected.length){showAlert('Серверные источники пока не подключены. Открой раздел «Интеграции».');return;}for(const s of connected)await syncSource(s);}
+  async function loadLiveData(){try{const r=await apiFetch('/api/dashboard');if(!r.ok)throw new Error('dashboard');const live=await r.json();state={...blank(),...live,meta:{...blank().meta,...(live.meta||{})}};renderAll();}catch(e){showAlert('Не удалось загрузить данные с сервера. Ложные демо-цифры не подставляются.','error');renderAll();}}
 
+  function val(row, names){for(const n of names){const k=Object.keys(row).find(x=>x.trim().toLowerCase()===n.toLowerCase());if(k!==undefined){const v=row[k];if(typeof v==='number')return v;const s=String(v??'').replace(/\s/g,'').replace(',','.').replace(/[^0-9.\-]/g,'');const x=Number(s);if(Number.isFinite(x))return x;}}return 0;}
+  function textVal(row,names,fallback=''){for(const n of names){const k=Object.keys(row).find(x=>x.trim().toLowerCase()===n.toLowerCase());if(k!==undefined&&row[k]!==undefined&&row[k]!==null&&String(row[k]).trim())return String(row[k]).trim();}return fallback;}
+  function dateVal(row){const raw=textVal(row,['дата','date','start_time','дата публикации','дата рассылки']);if(raw){const d=new Date(raw);if(!Number.isNaN(d.getTime()))return iso(d);}return iso(new Date());}
+  async function readRows(file){const ext=file.name.split('.').pop().toLowerCase();if(ext==='json'){const x=JSON.parse(await file.text());return Array.isArray(x)?x:(x.rows||x.data||[]);}if(ext==='csv'){const text=await file.text();if(window.XLSX){const wb=XLSX.read(text,{type:'string'});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});}}if(window.XLSX){const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});}throw new Error('Не удалось прочитать файл.');}
+  async function importFile(file){const source=document.getElementById('importSource').value,mode=document.getElementById('importMode').value,rows=await readRows(file);let parsed=[];
+    if(source==='site')parsed=rows.map(r=>({date:dateVal(r),visits:val(r,['визиты','visits','sessions']),users:val(r,['посетители','users']),pageviews:val(r,['просмотры','pageviews']),bounceRate:val(r,['отказы','bounce rate','bouncerate']),depth:val(r,['глубина','depth']),duration:val(r,['время','duration']),conversions:val(r,['цели','конверсии','conversions']),newVisitors:val(r,['новые посетители','new visitors','percent new visitors']),emailClicks:val(r,['клики по email','email clicks']),formSubmits:val(r,['заявки','form submits','отправки форм'])})).filter(x=>x.visits||x.users||x.pageviews||x.conversions);
+    if(source==='seo')parsed=rows.map(r=>({query:textVal(r,['запрос','query','поисковый запрос']),shows:val(r,['показы','shows','impressions']),clicks:val(r,['клики','clicks']),ctr:val(r,['ctr','кликабельность']),position:val(r,['позиция','position','avg position']),delta:val(r,['изменение позиции','delta','динамика'])})).filter(x=>x.query);
+    if(source==='ads')parsed=rows.map(r=>({channel:textVal(r,['канал','channel','площадка'],'Реклама'),name:textVal(r,['кампания','campaign','campaign name','название'],'Импортированная кампания'),campaignId:textVal(r,['id кампании','campaign id','campaignid']),status:textVal(r,['статус','status'],'unknown'),date:dateVal(r),impressions:val(r,['показы','impressions']),clicks:val(r,['клики','clicks']),spend:val(r,['расход','cost','spend','затраты']),conversions:val(r,['конверсии','conversions','goals'])})).filter(x=>x.name);
+    if(source==='social')parsed=rows.map(r=>({channel:textVal(r,['канал','channel','соцсеть','platform'],'Импорт'),title:textVal(r,['публикация','title','пост','post','материал'],'Публикация'),date:dateVal(r),reach:val(r,['охват','reach']),views:val(r,['просмотры','views','impressions']),reactions:val(r,['реакции','reactions','лайки','likes']),comments:val(r,['комментарии','comments']),shares:val(r,['репосты','shares','reposts']),clicks:val(r,['клики','clicks','переходы']),followers:val(r,['подписчики','followers','subscribers']),followersDelta:val(r,['прирост подписчиков','followers delta','subscriber delta'])})).filter(x=>x.reach||x.views||x.reactions||x.comments||x.shares||x.clicks);
+    if(source==='email')parsed=rows.map(r=>({id:textVal(r,['id','campaign_id']),name:textVal(r,['рассылка','name','campaign','тема','subject'],'Рассылка'),date:dateVal(r),status:textVal(r,['статус','status']),sent:val(r,['отправлено','sent']),delivered:val(r,['доставлено','delivered']),opened:val(r,['открытия','opened','read_unique']),clicked:val(r,['клики','clicked','clicked_unique']),unsub:val(r,['отписки','unsub','unsubscribed']),spam:val(r,['спам','spam']),errors:val(r,['ошибки','errors','bounces'])})).filter(x=>x.sent||x.delivered||x.opened||x.clicked);
+    if(!parsed.length)throw new Error('Не удалось сопоставить колонки файла с выбранным разделом.');const r=await apiFetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,rows:parsed,mode})});const out=await r.json().catch(()=>({}));if(!r.ok)throw new Error(out.error||'Сервер не принял импорт');document.getElementById('importLog').innerHTML=`<strong>${escapeHtml(file.name)}</strong>: импортировано ${parsed.length} строк.`;showAlert(`Импортировано ${parsed.length} строк`,'success');await loadLiveData();}
+
+  function showAlert(text,type=''){const el=document.getElementById('globalAlert');el.textContent=text;el.className=`alert ${type}`;el.hidden=false;clearTimeout(showAlert.timer);showAlert.timer=setTimeout(()=>el.hidden=true,6000);}
+  function navigate(view){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const copy={overview:['Обзор сайта и обращений','Посещения, заявки, email-клики, источники трафика и быстрый доступ к Вебвизору.'],site:['Сайт','Подробная Метрика: поведение, цели, устройства, регионы и страницы.'],seo:['SEO','Вебмастер, индексация, диагностика, запросы и план изменений сайта.'],ads:['Реклама','Яндекс Директ, VK Реклама и Дзен: деньги, клики, конверсии и статусы кампаний.'],social:['Соцсети','VK, Telegram, MAX и Дзен: контент, охват, просмотры и вовлечённость.'],email:['Email','UniSender: доставка, открытия, клики, отписки и жалобы.'],tasks:['Задачи','Автоматический план действий по реальным проблемам.'],reports:['Отчёты','Отчёт руководителю в PDF, JSON или CSV.'],integrations:['Интеграции','API и ручные импорты без выдуманных демо-данных.']}[view];document.getElementById('pageTitle').textContent=copy[0];document.getElementById('pageSubtitle').textContent=copy[1];document.getElementById('sidebar').classList.remove('open');}
   function renderAll(){renderOverview();renderSite();renderSeo();renderAds();renderSocial();renderEmail();renderTasks();renderReports();renderIntegrations();}
 
-  async function fetchApiStatus(){
-    try{const r=await apiFetch('/api/status',{headers:{Accept:'application/json'}});if(!r.ok)throw new Error('no api');apiStatus=await r.json();document.getElementById('syncDot').className='dot '+(apiStatus.mode==='live'?'live':'warn');document.getElementById('syncText').textContent=apiStatus.mode==='live'?'Сервер подключён':'Демо + локальные данные';}
-    catch{apiStatus={mode:'demo',integrations:{}};document.getElementById('syncDot').className='dot warn';document.getElementById('syncText').textContent='Демо + локальные данные';}
-    renderIntegrations();
-  }
-
-  async function syncSource(source){
-    showAlert(`Синхронизирую ${source}…`,'');
-    try{const r=await apiFetch(`/api/sync/${source}`,{method:'POST'});const out=await r.json();if(!r.ok)throw new Error(out.error||'Ошибка синхронизации');showAlert(out.message||'Данные обновлены','success');await loadLiveData();await fetchApiStatus();}
-    catch(e){showAlert(e.message||'Не удалось синхронизировать','error');}
-  }
-
-  async function syncAll(){
-    const connected=Object.entries(apiStatus.integrations||{}).filter(([,v])=>v.connected).map(([k])=>k);
-    if(!connected.length){showAlert('Серверные интеграции ещё не настроены. Сейчас приложение работает на локальных и импортированных данных.','');return;}
-    for(const source of connected.filter(x=>['metrika','webmaster','direct'].includes(x))) await syncSource(source);
-  }
-
-  async function loadLiveData(){
-    try{const r=await apiFetch('/api/dashboard');if(!r.ok)return;const live=await r.json();
-      if(live.site?.length) state.site=live.site;
-      if(live.sources?.length) state.sources=live.sources;
-      if(live.pages?.length) state.pages=live.pages;
-      if(live.seo?.length) state.seo=live.seo;
-      if(live.ads?.length) state.ads=live.ads;
-      if(live.adsDaily?.length) state.adsDaily=live.adsDaily;
-      saveState();renderAll();
-    }catch{}
-  }
-
-  function showAlert(text,type=''){const el=document.getElementById('globalAlert');el.textContent=text;el.className=`alert ${type}`;el.hidden=false;clearTimeout(showAlert.timer);showAlert.timer=setTimeout(()=>el.hidden=true,5000);}
-
-  function navigate(view){
-    document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
-    const copy={overview:['Маркетинговый обзор','Где всё растёт, где течёт и что делать дальше.'],site:['Сайт','Трафик, поведение и качество посадочных страниц.'],seo:['SEO','Запросы, позиции, CTR и точки роста.'],ads:['Реклама','Расходы, конверсии и эффективность кампаний.'],social:['Соцсети','Охват, вовлечённость и сильные форматы контента.'],email:['Email','Рассылки, открытия, клики и качество базы.'],tasks:['Задачи','Автоматический список действий по найденным проблемам.'],reports:['Отчёты','Собери понятный отчёт руководителю в один клик.'],integrations:['Интеграции','API, Excel и ручные источники в одном месте.']}[view];
-    document.getElementById('pageTitle').textContent=copy[0];document.getElementById('pageSubtitle').textContent=copy[1];document.getElementById('sidebar').classList.remove('open');
-    if(view==='reports')renderReports();
-  }
-
-  function normalizeRow(row){
-    const o={}; Object.entries(row).forEach(([k,v])=>{const key=String(k).trim().toLowerCase().replace(/ё/g,'е');o[key]=v;});return o;
-  }
-  function val(row, keys, fallback=0){for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&row[k]!==''){const raw=typeof row[k]==='string'?row[k].replace(/\s/g,'').replace(',','.').replace('%',''):row[k];const num=Number(raw);return Number.isFinite(num)?num:row[k];}}return fallback;}
-  function textVal(row,keys,fallback=''){for(const k of keys){if(row[k]!==undefined&&row[k]!==null&&row[k]!=='')return String(row[k]);}return fallback;}
-  function dateVal(row){let d=textVal(row,['дата','date','day','день']);if(!d)return iso(today);if(typeof d==='number'&&window.XLSX){const p=XLSX.SSF.parse_date_code(d);if(p)return `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;}const parsed=new Date(d);return Number.isNaN(parsed.getTime())?iso(today):iso(parsed);}
-
-  async function importFile(file){
-    const source=document.getElementById('importSource').value,mode=document.getElementById('importMode').value;
-    let rows=[]; const name=file.name.toLowerCase();
-    if(name.endsWith('.json')){rows=JSON.parse(await file.text());if(!Array.isArray(rows))rows=rows.data||rows.rows||[];}
-    else if(name.endsWith('.csv')){if(window.XLSX){const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});}else{throw new Error('Модуль импорта CSV не загрузился.');}}
-    else {if(!window.XLSX)throw new Error('Модуль Excel не загрузился.');const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});}
-    rows=rows.map(normalizeRow); if(!rows.length) throw new Error('В файле не нашлось строк данных.');
-    let parsed=[];
-    if(source==='site') parsed=rows.map(r=>({date:dateVal(r),visits:val(r,['визиты','visits','сеансы','sessions']),users:val(r,['посетители','users','пользователи']),pageviews:val(r,['просмотры','pageviews','views']),bounceRate:val(r,['отказы','bouncerate','bounce rate','bounce']),depth:val(r,['глубина','depth','pages/session']),duration:val(r,['время','duration','avg duration']),conversions:val(r,['конверсии','conversions','цели','goals'])})).filter(x=>x.visits||x.users||x.pageviews||x.conversions);
-    if(source==='seo') parsed=rows.map(r=>({query:textVal(r,['запрос','query','поисковый запрос','search query']),shows:val(r,['показы','shows','impressions']),clicks:val(r,['клики','clicks']),ctr:val(r,['ctr','ctr %','кликабельность']),position:val(r,['позиция','position','avg position']),delta:val(r,['изменение позиции','delta','динамика','change'])})).filter(x=>x.query);
-    if(source==='ads') parsed=rows.map(r=>({name:textVal(r,['кампания','campaign','campaign name','название'],'Импортированная кампания'),impressions:val(r,['показы','impressions']),clicks:val(r,['клики','clicks']),spend:val(r,['расход','cost','spend','затраты']),conversions:val(r,['конверсии','conversions','goals'])})).filter(x=>x.impressions||x.clicks||x.spend||x.conversions);
-    if(source==='social') parsed=rows.map(r=>({channel:textVal(r,['канал','channel','соцсеть','platform'],'Импорт'),title:textVal(r,['публикация','title','пост','post','материал'],'Публикация'),date:dateVal(r),reach:val(r,['охват','reach','просмотры','views','impressions']),reactions:val(r,['реакции','reactions','лайки','likes','engagement'])})).filter(x=>x.reach||x.reactions);
-    if(source==='email') parsed=rows.map(r=>({name:textVal(r,['рассылка','name','campaign','тема'],'Рассылка'),date:dateVal(r),sent:val(r,['отправлено','sent','delivered']),opened:val(r,['открытия','opened','opens']),clicked:val(r,['клики','clicked','clicks']),unsub:val(r,['отписки','unsub','unsubscribes']),errors:val(r,['ошибки','errors','bounces'])})).filter(x=>x.sent||x.opened||x.clicked);
-    if(!parsed.length) throw new Error('Не удалось сопоставить колонки. Проверь названия полей или выбери другой источник.');
-    if(mode==='replace') state[source]=parsed; else state[source]=[...(state[source]||[]),...parsed];
-    saveState(); renderAll(); document.getElementById('importLog').innerHTML=`<strong>${escapeHtml(file.name)}</strong>: импортировано ${parsed.length} строк в раздел «${escapeHtml(source)}» (${mode==='replace'?'замена':'добавление'}).`;
-    try{await apiFetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,rows:parsed,mode})});}catch{}
-    showAlert(`Импортировано ${parsed.length} строк из ${file.name}`,'success');
-  }
-
-  function reportData(days){return {generatedAt:new Date().toISOString(),periodDays:days,health:calcHealth(),site:summarizeSite(days),seo:summarizeSeo(),ads:summarizeAds(),social:summarizeSocial(),email:summarizeEmail(),issues:getIssues(),tasks:state.tasks.filter(x=>!x.done),seoQueries:state.seo,adsCampaigns:state.ads,socialPosts:state.social};}
-  function selectedSections(){return [...document.querySelectorAll('.reportCheck:checked')].map(x=>x.value);}
-  function buildReportHtml(){
-    const days=Number(document.getElementById('reportPeriod').value||30), data=reportData(days), selected=selectedSections(), title=escapeHtml(document.getElementById('reportName').value||'Маркетинговый отчёт');
-    const kpi=(label,val)=>`<div class="pdf-kpi"><span>${escapeHtml(label)}</span><strong>${val}</strong></div>`;
-    let h=`<div class="pdf-report"><h1>${title}</h1><div class="report-date">Период: последние ${days} дней · сформировано ${new Date().toLocaleString('ru-RU')}</div>`;
-    if(selected.includes('overview'))h+=`<h2>Общая сводка</h2><div class="pdf-kpis">${kpi('CS Marketing Health',`${data.health}/100`)}${kpi('Визиты',fmt.format(data.site.visits))}${kpi('Конверсии',fmt.format(data.site.conversions))}${kpi('SEO-показы',fmt.format(data.seo.shows))}${kpi('Рекламный CPA',money.format(data.ads.cpa))}${kpi('Охват соцсетей',fmt.format(data.social.reach))}</div>`;
-    if(selected.includes('site'))h+=`<h2>Сайт</h2><p>Визиты: <strong>${fmt.format(data.site.visits)}</strong> · посетители: <strong>${fmt.format(data.site.users)}</strong> · отказы: <strong>${pct(data.site.bounce)}</strong> · глубина: <strong>${data.site.depth.toFixed(2)}</strong>.</p>`;
-    if(selected.includes('seo'))h+=`<h2>SEO</h2><p>Показы: <strong>${fmt.format(data.seo.shows)}</strong> · клики: <strong>${fmt.format(data.seo.clicks)}</strong> · CTR: <strong>${pct(data.seo.ctr)}</strong> · средняя позиция: <strong>${data.seo.avgPosition.toFixed(1)}</strong>.</p><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th></tr></thead><tbody>${state.seo.slice(0,12).map(x=>`<tr><td>${escapeHtml(x.query)}</td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${x.position.toFixed(1)}</td></tr>`).join('')}</tbody></table>`;
-    if(selected.includes('ads'))h+=`<h2>Реклама</h2><p>Расход: <strong>${money.format(data.ads.spend)}</strong> · клики: <strong>${fmt.format(data.ads.clicks)}</strong> · конверсии: <strong>${fmt.format(data.ads.conversions)}</strong> · CPA: <strong>${money.format(data.ads.cpa)}</strong>.</p><table><thead><tr><th>Кампания</th><th>Расход</th><th>Клики</th><th>Конверсии</th><th>CPA</th></tr></thead><tbody>${state.ads.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${money.format(x.spend)}</td><td>${fmt.format(x.clicks)}</td><td>${x.conversions}</td><td>${x.conversions?money.format(x.spend/x.conversions):'—'}</td></tr>`).join('')}</tbody></table>`;
-    if(selected.includes('social'))h+=`<h2>Соцсети</h2><p>Охват: <strong>${fmt.format(data.social.reach)}</strong> · реакции: <strong>${fmt.format(data.social.reactions)}</strong> · ER: <strong>${pct(data.social.er)}</strong>.</p>`;
-    if(selected.includes('email'))h+=`<h2>Email</h2><p>Отправлено: <strong>${fmt.format(data.email.sent)}</strong> · Open Rate: <strong>${pct(data.email.openRate)}</strong> · CTR: <strong>${pct(data.email.ctr)}</strong> · отписки: <strong>${pct(data.email.unsubRate,2)}</strong>.</p>`;
-    if(selected.includes('recommendations'))h+=`<h2>Проблемы и рекомендации</h2>${data.issues.map(x=>`<div class="pdf-reco"><strong>${escapeHtml(x.title)}</strong><span>${escapeHtml(x.text)} ${escapeHtml(x.action)}</span></div>`).join('')}<h2>План действий</h2><ol>${data.tasks.slice(0,8).map(x=>`<li>${escapeHtml(x.title)}</li>`).join('')}</ol>`;
-    return h+'</div>';
-  }
-  async function downloadPdf(){const box=document.getElementById('reportCanvas');box.innerHTML=buildReportHtml();if(window.html2pdf){await html2pdf().set({margin:[9,9,9,9],filename:`marketing-report-${iso(today)}.pdf`,image:{type:'jpeg',quality:.96},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},pagebreak:{mode:['css','legacy']}}).from(box.firstElementChild).save();}else{window.print();}}
-  function downloadBlob(content,name,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
-  function downloadJson(){const days=Number(document.getElementById('reportPeriod').value||30);downloadBlob(JSON.stringify(reportData(days),null,2),`marketing-data-${iso(today)}.json`,'application/json');}
-  function downloadCsv(){const rows=[['section','metric','value'],['site','visits',summarizeSite(30).visits],['site','users',summarizeSite(30).users],['site','conversions',summarizeSite(30).conversions],['seo','shows',summarizeSeo().shows],['seo','clicks',summarizeSeo().clicks],['ads','spend',summarizeAds().spend],['ads','conversions',summarizeAds().conversions],['social','reach',summarizeSocial().reach],['email','openRate',summarizeEmail().openRate]];downloadBlob('\uFEFF'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n'),`marketing-summary-${iso(today)}.csv`,'text/csv;charset=utf-8');}
-
-  document.getElementById('loginForm').addEventListener('submit', login);
-  document.getElementById('logoutBtn').addEventListener('click', logout);
+  document.getElementById('loginForm').addEventListener('submit',login);
+  document.getElementById('logoutBtn').addEventListener('click',logout);
   document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.view)));
-  document.querySelectorAll('[data-jump]').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.jump)));
   document.getElementById('mobileMenuBtn').addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
   document.getElementById('periodSelect').addEventListener('change',renderAll);
   document.getElementById('seoSearch').addEventListener('input',renderSeoTable);
   document.getElementById('syncBtn').addEventListener('click',syncAll);
+  document.getElementById('syncAllBtn')?.addEventListener('click',syncAll);
   document.getElementById('quickReportBtn').addEventListener('click',downloadPdf);
   document.getElementById('generateReportBtn').addEventListener('click',downloadPdf);
   document.getElementById('downloadJsonBtn').addEventListener('click',downloadJson);
@@ -495,10 +329,10 @@
   document.querySelectorAll('.reportCheck').forEach(x=>x.addEventListener('change',renderReports));
   document.getElementById('reportName').addEventListener('input',renderReports);
   document.getElementById('importBtn').addEventListener('click',()=>document.getElementById('fileInput').click());
-  document.getElementById('fileInput').addEventListener('change',async(e)=>{const f=e.target.files?.[0];if(!f)return;try{await importFile(f);}catch(err){showAlert(err.message||'Ошибка импорта','error');}e.target.value='';});
-  document.getElementById('resetDemoBtn').addEventListener('click',()=>{state=structuredClone(demo);saveState();renderAll();showAlert('Демо-данные восстановлены.','success');});
+  document.getElementById('fileInput').addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;try{await importFile(f);}catch(err){showAlert(err.message||'Ошибка импорта','error');}e.target.value='';});
+  document.getElementById('clearLocalBtn').addEventListener('click',()=>{local.manualTasks=[];local.doneTasks={};saveLocal();renderTasks();showAlert('Локальный кэш задач очищен. Серверные данные не затронуты.','success');});
   document.getElementById('addTaskBtn').addEventListener('click',()=>document.getElementById('taskDialog').showModal());
-  document.getElementById('taskForm').addEventListener('submit',(e)=>{e.preventDefault();const title=document.getElementById('taskTitleInput').value.trim();if(!title)return;state.tasks.push({id:`u${Date.now()}`,title,priority:document.getElementById('taskPriorityInput').value,source:'Своя задача',done:false});saveState();document.getElementById('taskTitleInput').value='';document.getElementById('taskDialog').close();renderTasks();});
+  document.getElementById('taskForm').addEventListener('submit',e=>{e.preventDefault();const title=document.getElementById('taskTitleInput').value.trim();if(!title)return;local.manualTasks=local.manualTasks||[];local.manualTasks.push({id:`manual-${Date.now()}`,title,priority:document.getElementById('taskPriorityInput').value,source:'Своя задача'});saveLocal();document.getElementById('taskTitleInput').value='';document.getElementById('taskDialog').close();renderTasks();});
 
   initAuth();
 })();
