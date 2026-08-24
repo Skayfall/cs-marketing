@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v1.0 — unified marketing control center
+// CS Marketing by skayfall v1.1 — unified marketing control center
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
@@ -32,7 +32,7 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
-  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|unisender)$/);
+  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|unisender)$/);
   if (request.method === 'POST' && m) {
     try {
       const result = await syncSource(m[1], env);
@@ -167,7 +167,8 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS email_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, date TEXT, status TEXT, sent REAL DEFAULT 0, delivered REAL DEFAULT 0, opened REAL DEFAULT 0, opened_all REAL DEFAULT 0, clicked REAL DEFAULT 0, clicked_all REAL DEFAULT 0, unsub REAL DEFAULT 0, spam REAL DEFAULT 0, errors REAL DEFAULT 0, report_url TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS email_links (campaign_id TEXT NOT NULL, url TEXT NOT NULL, clicks REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(campaign_id,url))`,
       `CREATE TABLE IF NOT EXISTS utm_stats (period_key TEXT NOT NULL, source TEXT NOT NULL, medium TEXT NOT NULL, campaign TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, conversions REAL DEFAULT 0, PRIMARY KEY(period_key,source,medium,campaign))`,
-      `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`
+      `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`,
+      `CREATE TABLE IF NOT EXISTS integration_cache (cache_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, expires_at INTEGER DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
     ];
     for (const sql of creates) await env.DB.prepare(sql).run();
     const alters = [
@@ -182,7 +183,11 @@ async function ensureExtendedSchema(env) {
       `ALTER TABLE ad_campaign_daily ADD COLUMN bounce_rate REAL DEFAULT 0`,
       `ALTER TABLE ad_campaign_daily ADD COLUMN avg_pageviews REAL DEFAULT 0`,
       `ALTER TABLE email_campaigns ADD COLUMN opened_all REAL DEFAULT 0`,
-      `ALTER TABLE email_campaigns ADD COLUMN clicked_all REAL DEFAULT 0`
+      `ALTER TABLE email_campaigns ADD COLUMN clicked_all REAL DEFAULT 0`,
+      `ALTER TABLE social_posts ADD COLUMN post_id TEXT`,
+      `ALTER TABLE social_posts ADD COLUMN post_url TEXT`,
+      `ALTER TABLE social_posts ADD COLUMN media_type TEXT`,
+      `ALTER TABLE social_posts ADD COLUMN text_length REAL DEFAULT 0`
     ];
     for (const sql of alters) await env.DB.prepare(sql).run().catch(() => {});
   })();
@@ -217,6 +222,9 @@ async function status(env) {
   const vkAdsReady = Boolean(env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET));
   const vkAdsPartial = Boolean(env.VK_ADS_CLIENT_SECRET && !env.VK_ADS_CLIENT_ID && !env.VK_ADS_TOKEN);
   const vkSocialReady = Boolean(env.VK_COMMUNITY_TOKEN);
+  const telegramReady = Boolean(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME);
+  const maxReady = Boolean(env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID);
+  const maxPartial = Boolean((env.MAX_BOT_TOKEN || env.MAX_CHANNEL_ID) && !maxReady);
 
   const integrations = {
     metrika: item('metrika', yandexBase && metrikaTarget,
@@ -235,6 +243,12 @@ async function status(env) {
     vksocial: item('vksocial', vkSocialReady,
       [!env.VK_COMMUNITY_TOKEN && 'VK_COMMUNITY_TOKEN'].filter(Boolean), 'api',
       { note: vkSocialReady && !env.VK_GROUP_ID ? 'ID сообщества приложение попробует определить автоматически по токену. VK_GROUP_ID нужен только как запасной вариант.' : null }),
+    telegram: item('telegram', telegramReady,
+      [!telegramReady && 'TELEGRAM_CHANNEL_URL'].filter(Boolean), 'public-web',
+      { note: telegramReady ? 'Для публичного канала загружаются посты и просмотры из web-preview Telegram. Реакции и комментарии могут быть недоступны публично.' : 'Достаточно публичной ссылки канала, например https://t.me/имя_канала.' }),
+    maxsocial: item('maxsocial', maxReady,
+      [!env.MAX_BOT_TOKEN && 'MAX_BOT_TOKEN', !env.MAX_CHANNEL_ID && 'MAX_CHANNEL_ID'].filter(Boolean), 'api',
+      { partial: maxPartial, note: maxReady ? 'Бот должен быть администратором канала; MAX API отдаёт посты и их статистику просмотров/репостов.' : 'Для исторических постов MAX нужен Bot API: токен бота + ID канала.' }),
     unisender: item('unisender', Boolean(env.UNISENDER_API_KEY),
       [!env.UNISENDER_API_KEY && 'UNISENDER_API_KEY'].filter(Boolean))
   };
@@ -251,6 +265,10 @@ async function status(env) {
     VK_ADS_TOKEN: Boolean(env.VK_ADS_TOKEN),
     VK_COMMUNITY_TOKEN: Boolean(env.VK_COMMUNITY_TOKEN),
     VK_GROUP_ID: Boolean(env.VK_GROUP_ID),
+    TELEGRAM_CHANNEL_URL: Boolean(env.TELEGRAM_CHANNEL_URL),
+    TELEGRAM_CHANNEL_USERNAME: Boolean(env.TELEGRAM_CHANNEL_USERNAME),
+    MAX_BOT_TOKEN: Boolean(env.MAX_BOT_TOKEN),
+    MAX_CHANNEL_ID: Boolean(env.MAX_CHANNEL_ID),
     METRIKA_COUNTER_ID: Boolean(env.METRIKA_COUNTER_ID),
     WEBMASTER_HOST_ID: Boolean(env.WEBMASTER_HOST_ID)
   };
@@ -285,7 +303,7 @@ async function dashboard(env) {
     q(`SELECT code,severity,state,last_update AS lastUpdate FROM seo_problems ORDER BY CASE severity WHEN 'FATAL' THEN 1 WHEN 'CRITICAL' THEN 2 WHEN 'POSSIBLE_PROBLEM' THEN 3 ELSE 4 END, code`),
     q(`SELECT channel,campaign_id AS campaignId,name,status,native_state AS nativeState,updated_at AS updatedAt FROM ad_campaign_meta ORDER BY channel,name`),
     q(`SELECT channel,campaign_id AS campaignId,name,date,impressions,clicks,spend,conversions,bounce_rate AS bounceRate,avg_pageviews AS avgPageviews FROM ad_campaign_daily ORDER BY date,channel,name`),
-    q(`SELECT channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta AS followersDelta FROM social_posts ORDER BY date DESC`),
+    q(`SELECT channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta AS followersDelta,post_id AS postId,post_url AS postUrl,media_type AS mediaType,text_length AS textLength FROM social_posts ORDER BY date DESC`),
     q(`SELECT channel,date,views,visitors,reach,subscribers_reach AS subscribersReach,subscribed,unsubscribed,likes,comments,shares FROM social_channel_daily ORDER BY date`),
     q(`SELECT id,name,date,status,sent,delivered,opened,opened_all AS openedAll,clicked,clicked_all AS clickedAll,unsub,spam,errors,report_url AS reportUrl FROM email_campaigns ORDER BY date DESC`),
     q(`SELECT campaign_id AS campaignId,url,clicks FROM email_links ORDER BY clicks DESC LIMIT 500`),
@@ -314,6 +332,8 @@ async function syncConfigured(env) {
   if (env.YANDEX_TOKEN) jobs.push(syncDirect(env));
   if (env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) jobs.push(syncVkAds(env));
   if (env.VK_COMMUNITY_TOKEN) jobs.push(syncVkCommunity(env));
+  if (env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME) jobs.push(syncTelegram(env));
+  if (env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID) jobs.push(syncMax(env));
   if (env.UNISENDER_API_KEY) jobs.push(syncUnisender(env));
   await Promise.allSettled(jobs);
 }
@@ -325,6 +345,8 @@ async function syncSource(source, env) {
   if (source === 'direct') return syncDirect(env);
   if (source === 'vkads') return syncVkAds(env);
   if (source === 'vksocial') return syncVkCommunity(env);
+  if (source === 'telegram') return syncTelegram(env);
+  if (source === 'maxsocial') return syncMax(env);
   if (source === 'unisender') return syncUnisender(env);
   throw new Error('Unknown source');
 }
@@ -614,13 +636,11 @@ function directStateRu(state) {
 
 async function syncVkAds(env) {
   if (!env.VK_ADS_TOKEN && !(env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) {
-    throw new Error('Добавьте VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET (или готовый VK_ADS_TOKEN) в Cloudflare Runtime Variables/Secrets.');
+    throw new Error('Добавьте VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET в Cloudflare Runtime Variables/Secrets. Access token приложение получает само.');
   }
-  const token = await getVkAdsToken(env);
-  const headers = { Authorization: `Bearer ${token}`, 'Accept-Language': 'ru' };
   const campaigns = [];
   for (let offset = 0; offset < 1000; offset += 50) {
-    const page = await apiGet(withParams('https://ads.vk.com/api/v2/ad_plans.json', { limit: 50, offset, fields: 'id,name,status' }), headers);
+    const page = await vkAdsGet(env, withParams('https://ads.vk.com/api/v2/ad_plans.json', { limit: 50, offset, fields: 'id,name,status' }));
     const items = Array.isArray(page?.items) ? page.items : Array.isArray(page) ? page : [];
     campaigns.push(...items);
     if (items.length < 50 || (Number(page?.count) && campaigns.length >= Number(page.count))) break;
@@ -642,7 +662,7 @@ async function syncVkAds(env) {
     const url = withParams('https://ads.vk.com/api/v2/statistics/ad_plans/day.json', {
       id: group.join(','), date_from: dateOnly(start), date_to: dateOnly(end), metrics: 'base'
     });
-    const payload = await apiGet(url, headers).catch(err => ({ __error: err.message }));
+    const payload = await vkAdsGet(env, url).catch(err => ({ __error: err.message }));
     if (payload?.__error) {
       await logSync(env, 'vkads', 'partial', `Кампании загружены, статистика VK Ads недоступна: ${payload.__error.slice(0,350)}`);
       return { message: `VK Реклама: загружено ${campaigns.length} кампаний. Статистика пока не загрузилась; статусы кампаний уже сохранены.` };
@@ -658,12 +678,19 @@ async function syncVkAds(env) {
       ON CONFLICT(channel,campaign_id,date) DO UPDATE SET name=excluded.name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions`)
       .bind(String(r.id), names.get(String(r.id)) || `Кампания ${r.id}`, r.date, num(r.impressions), num(r.clicks), num(r.spend), num(r.conversions)).run();
   }
-  await logSync(env, 'vkads', 'ok', `VK Реклама: ${campaigns.length} кампаний, ${allRows.length} дневных строк`);
-  return { message: `VK Реклама обновлена: ${campaigns.length} кампаний, ${allRows.length} строк статистики.` };
+  await logSync(env, 'vkads', 'ok', `VK Реклама: ${campaigns.length} кампаний, ${allRows.length} дневных строк. OAuth-токен обновляется автоматически.`);
+  return { message: `VK Реклама обновлена: ${campaigns.length} кампаний, ${allRows.length} строк статистики. Временный access token управляется приложением автоматически.` };
 }
 
-async function getVkAdsToken(env) {
-  if (env.VK_ADS_TOKEN) return String(env.VK_ADS_TOKEN);
+async function getVkAdsToken(env, force = false) {
+  if (!(env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) {
+    if (env.VK_ADS_TOKEN) return String(env.VK_ADS_TOKEN);
+    throw new Error('VK Ads OAuth: отсутствуют VK_ADS_CLIENT_ID/VK_ADS_CLIENT_SECRET.');
+  }
+  if (!force) {
+    const cached = await readIntegrationCache(env, 'vkads_oauth').catch(() => null);
+    if (cached?.accessToken && num(cached.expiresAt) > Date.now() + 60_000) return String(cached.accessToken);
+  }
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
     client_id: String(env.VK_ADS_CLIENT_ID),
@@ -675,8 +702,42 @@ async function getVkAdsToken(env) {
   const text = await res.text();
   let data = {}; try { data = JSON.parse(text); } catch {}
   if (!res.ok || !data.access_token) throw new Error(`VK Ads OAuth ${res.status}: ${data?.error?.message || data?.error_description || text.slice(0,400)}`);
-  return String(data.access_token);
+  const ttl = Math.max(300, num(data.expires_in) || 86400);
+  const record = { accessToken: String(data.access_token), expiresAt: Date.now() + ttl * 1000 };
+  await writeIntegrationCache(env, 'vkads_oauth', record, record.expiresAt).catch(() => {});
+  return record.accessToken;
 }
+
+async function vkAdsGet(env, url) {
+  const run = async (force = false) => {
+    const token = await getVkAdsToken(env, force);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, 'Accept-Language': 'ru' } });
+    const text = await res.text();
+    let data = {}; try { data = JSON.parse(text); } catch {}
+    return { res, text, data };
+  };
+  let result = await run(false);
+  if (result.res.status === 401 && env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET) {
+    await deleteIntegrationCache(env, 'vkads_oauth').catch(() => {});
+    result = await run(true);
+  }
+  if (!result.res.ok) throw new Error(`VK Ads API ${result.res.status}: ${result.data?.error?.message || result.data?.error_description || result.text.slice(0,400)}`);
+  return result.data;
+}
+
+async function readIntegrationCache(env, key) {
+  const row = await env.DB.prepare(`SELECT value_json AS valueJson,expires_at AS expiresAt FROM integration_cache WHERE cache_key=?`).bind(key).first();
+  if (!row?.valueJson) return null;
+  const value = JSON.parse(row.valueJson);
+  if (row.expiresAt && !value.expiresAt) value.expiresAt = row.expiresAt;
+  return value;
+}
+async function writeIntegrationCache(env, key, value, expiresAt = 0) {
+  return env.DB.prepare(`INSERT INTO integration_cache(cache_key,value_json,expires_at,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(cache_key) DO UPDATE SET value_json=excluded.value_json,expires_at=excluded.expires_at,updated_at=CURRENT_TIMESTAMP`)
+    .bind(key, JSON.stringify(value), Math.round(num(expiresAt))).run();
+}
+async function deleteIntegrationCache(env, key) { return env.DB.prepare(`DELETE FROM integration_cache WHERE cache_key=?`).bind(key).run(); }
 
 function vkAdsState(status) {
   const s = String(status || '').toLowerCase();
@@ -739,10 +800,13 @@ async function syncVkCommunity(env) {
     const reactions = num(post?.likes?.count);
     const comments = num(post?.comments?.count);
     const shares = num(post?.reposts?.count);
-    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,updated_at)
-      VALUES('VK',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,updated_at=CURRENT_TIMESTAMP`)
-      .bind(title,dateOnly(d),0,views,reactions,comments,shares,0,num(group.members_count),0).run();
+    const attachments = Array.isArray(post?.attachments) ? post.attachments : [];
+    const mediaType = attachments.some(a=>a?.type==='video') ? 'video' : attachments.some(a=>a?.type==='photo') ? 'image' : attachments.some(a=>a?.type==='poll') ? 'poll' : 'text';
+    const postUrl = `https://vk.com/wall-${groupId}_${post?.id}`;
+    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
+      VALUES('VK',?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
+      .bind(title,dateOnly(d),0,views,reactions,comments,shares,0,num(group.members_count),0,String(post?.id||''),postUrl,mediaType,text.length).run();
   }
 
   const end = new Date();
@@ -821,6 +885,134 @@ async function vkApi(method, params, token) {
   if (data?.error) throw new Error(`VK API ${method}: ${data.error.error_msg || data.error.error_code || 'ошибка'}`);
   return data?.response;
 }
+
+
+/* -------------------- TELEGRAM PUBLIC CHANNEL -------------------- */
+
+async function syncTelegram(env) {
+  const source = String(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME || '').trim();
+  if (!source) throw new Error('Добавьте TELEGRAM_CHANNEL_URL, например https://t.me/имя_канала.');
+  const info = telegramChannelInfo(source);
+  const posts = new Map();
+  let before = null;
+  let followers = 0;
+  for (let page = 0; page < 5; page++) {
+    const url = `${info.previewUrl}${before ? `?before=${encodeURIComponent(before)}` : ''}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CSMarketing/1.1)', 'Accept-Language': 'ru,en;q=0.8' } });
+    const html = await res.text();
+    if (!res.ok) throw new Error(`Telegram web-preview ${res.status}: ${html.slice(0,220)}`);
+    if (!followers) followers = parseCompactNumber(firstMatch(html, /counter_value[^>]*>([^<]+)/i) || firstMatch(html, /([\d.,]+\s*[KMB]?)\s+subscribers/i));
+    const batch = parseTelegramHtml(html, info.username, followers);
+    if (!batch.length) break;
+    batch.forEach(x => posts.set(x.postId || `${x.date}|${x.title}`, x));
+    const ids = batch.map(x => Number(String(x.postId || '').split('/').pop())).filter(Number.isFinite);
+    if (!ids.length) break;
+    const next = String(Math.min(...ids));
+    if (before === next) break;
+    before = next;
+    if (batch.length < 10) break;
+  }
+
+  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='Telegram'`).run();
+  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='Telegram'`).run();
+  const daily = new Map();
+  for (const post of [...posts.values()]) {
+    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
+      VALUES('Telegram',?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(channel,title,date) DO UPDATE SET views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,followers=excluded.followers,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
+      .bind(post.title,post.date,0,post.views,post.reactions,post.comments,post.shares,0,followers,0,post.postId,post.postUrl,post.mediaType,post.textLength).run();
+    const d = daily.get(post.date) || { views: 0, likes: 0, comments: 0, shares: 0 };
+    d.views += post.views; d.likes += post.reactions; d.comments += post.comments; d.shares += post.shares; daily.set(post.date,d);
+  }
+  for (const [date,d] of daily) await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
+      VALUES('Telegram',?, ?,0,0,0,0,0,?,?,?) ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,likes=excluded.likes,comments=excluded.comments,shares=excluded.shares`)
+      .bind(date,d.views,d.likes,d.comments,d.shares).run();
+  await saveResolved(env, 'telegram', info.username, `@${info.username}`);
+  const message = `Telegram: загружено ${posts.size} публичных постов${followers ? `, подписчиков ${followers}` : ''}. Просмотры берутся из публичной web-версии; часть реакций/комментариев Telegram публично не показывает.`;
+  await logSync(env,'telegram',posts.size?'ok':'partial',message);
+  return { message };
+}
+
+function telegramChannelInfo(raw) {
+  let value = String(raw || '').trim();
+  value = value.replace(/^@/, '');
+  let username = value;
+  try {
+    if (/^https?:\/\//i.test(value)) {
+      const u = new URL(value);
+      const parts = u.pathname.split('/').filter(Boolean);
+      username = parts[0] === 's' ? parts[1] : parts[0];
+    }
+  } catch {}
+  username = String(username || '').replace(/^@/,'').replace(/[^A-Za-z0-9_]/g,'');
+  if (!username) throw new Error('TELEGRAM_CHANNEL_URL не похож на публичный Telegram-канал.');
+  return { username, previewUrl: `https://t.me/s/${username}` };
+}
+
+function parseTelegramHtml(html, username, followers = 0) {
+  const matches = [...String(html).matchAll(/data-post="([^"]+)"/g)];
+  const out = [];
+  for (let i=0;i<matches.length;i++) {
+    const m=matches[i], next=matches[i+1];
+    const block=html.slice(m.index, next ? next.index : Math.min(html.length, m.index+30000));
+    const postId=String(m[1]||'');
+    const dateRaw=firstMatch(block, /<time[^>]+datetime="([^"]+)"/i);
+    const date=dateRaw ? String(dateRaw).slice(0,10) : '';
+    if (!date) continue;
+    const rawText=firstMatch(block, /tgme_widget_message_text[^>]*>([\s\S]*?)(?:<\/div>\s*<div class="tgme_widget_message_footer|<\/div>\s*<a class="tgme_widget_message_date)/i) || '';
+    const text=stripHtml(rawText).replace(/\s+/g,' ').trim();
+    const views=parseCompactNumber(firstMatch(block, /tgme_widget_message_views[^>]*>([^<]+)/i));
+    const comments=parseCompactNumber(firstMatch(block, /tgme_widget_message_comments[^>]*>[\s\S]*?<span[^>]*>([^<]+)/i));
+    const reactionParts=[...block.matchAll(/tgme_widget_message_reaction[^>]*>[\s\S]*?(?:count|counter)[^>]*>([^<]+)/gi)].map(x=>parseCompactNumber(x[1]));
+    const reactions=reactionParts.reduce((a,b)=>a+b,0);
+    const mediaType=/tgme_widget_message_video|video_player/i.test(block)?'video':/tgme_widget_message_photo|background-image/i.test(block)?'image':/tgme_widget_message_poll/i.test(block)?'poll':'text';
+    const title=text ? text.slice(0,180) : `Пост Telegram ${postId.split('/').pop()}`;
+    out.push({ postId, postUrl:`https://t.me/${postId}`, title, date, views, reactions, comments, shares:0, followers, mediaType, textLength:text.length });
+  }
+  return out;
+}
+
+/* -------------------- MAX CHANNEL -------------------- */
+
+async function syncMax(env) {
+  if (!env.MAX_BOT_TOKEN || !env.MAX_CHANNEL_ID) throw new Error('Для MAX добавьте MAX_BOT_TOKEN (Secret) и MAX_CHANNEL_ID (Text). Бот должен быть администратором канала.');
+  const url = withParams('https://platform-api2.max.ru/messages', { chat_id: String(env.MAX_CHANNEL_ID), count: 100 });
+  const res = await fetch(url, { headers: { Authorization: String(env.MAX_BOT_TOKEN), Accept: 'application/json' } });
+  const text = await res.text(); let data = {}; try { data=JSON.parse(text); } catch {}
+  if (!res.ok) throw new Error(`MAX API ${res.status}: ${data?.message || data?.error || text.slice(0,350)}`);
+  const messages = Array.isArray(data?.messages) ? data.messages : Array.isArray(data) ? data : [];
+  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='MAX'`).run();
+  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='MAX'`).run();
+  const daily=new Map();
+  for (const m of messages) {
+    const stamp=num(m?.timestamp); if(!stamp) continue;
+    const date=dateOnly(new Date(stamp));
+    const textBody=String(m?.body?.text || '').replace(/\s+/g,' ').trim();
+    const mid=String(m?.body?.mid || m?.mid || m?.message_id || m?.id || `${stamp}`);
+    const stat=m?.stat || {};
+    const views=num(stat.views ?? stat.view_count ?? stat.views_count ?? stat.viewers);
+    const shares=num(stat.reposts ?? stat.repost_count ?? stat.reposts_count ?? stat.shares);
+    const attachments=Array.isArray(m?.body?.attachments)?m.body.attachments:[];
+    const mediaType=attachments.some(a=>String(a?.type).toLowerCase().includes('video'))?'video':attachments.some(a=>['image','photo'].includes(String(a?.type).toLowerCase()))?'image':attachments.length?'attachment':'text';
+    const title=textBody ? textBody.slice(0,180) : `Пост MAX ${mid}`;
+    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
+      VALUES('MAX',?,?,?,?,?,?,?,?,0,0,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(channel,title,date) DO UPDATE SET views=excluded.views,shares=excluded.shares,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
+      .bind(title,date,0,views,0,0,shares,0,mid,String(m?.url||''),mediaType,textBody.length).run();
+    const d=daily.get(date)||{views:0,shares:0};d.views+=views;d.shares+=shares;daily.set(date,d);
+  }
+  for (const [date,d] of daily) await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
+    VALUES('MAX',?, ?,0,0,0,0,0,0,0,?) ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,shares=excluded.shares`).bind(date,d.views,d.shares).run();
+  await saveResolved(env,'maxsocial',String(env.MAX_CHANNEL_ID),'MAX channel');
+  const message=`MAX: загружено ${messages.length} последних постов. API канала отдаёт просмотры и репосты; другие реакции учитываются только если доступны в ответе API.`;
+  await logSync(env,'maxsocial',messages.length?'ok':'partial',message);
+  return { message };
+}
+
+function firstMatch(text,re){const m=String(text||'').match(re);return m?m[1]||'':'';}
+function parseCompactNumber(value){const s=stripHtml(String(value||'')).trim().replace(/\s/g,'').replace(',','.');const m=s.match(/([\d.]+)([KMBКММЛН]*)/i);if(!m)return num(s);let n=Number(m[1]||0),u=String(m[2]||'').toUpperCase();if(u==='K'||u==='К')n*=1e3;else if(u==='M'||u==='М'||u==='МЛН')n*=1e6;else if(u==='B')n*=1e9;return Math.round(n);}
+function stripHtml(html){return decodeHtml(String(html||'').replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,' '));}
+function decodeHtml(s){return String(s||'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16)));}
 
 /* -------------------- UNISENDER -------------------- */
 
