@@ -1,3 +1,4 @@
+// CS Marketing by skayfall v1.0 — unified marketing control center
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
@@ -31,7 +32,7 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
-  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|unisender|maxsocial)$/);
+  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|unisender)$/);
   if (request.method === 'POST' && m) {
     try {
       const result = await syncSource(m[1], env);
@@ -162,7 +163,11 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS ad_campaign_meta (channel TEXT NOT NULL, campaign_id TEXT NOT NULL, name TEXT NOT NULL, status TEXT, native_state TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(channel,campaign_id))`,
       `CREATE TABLE IF NOT EXISTS ad_campaign_daily (channel TEXT NOT NULL, campaign_id TEXT NOT NULL, name TEXT NOT NULL, date TEXT NOT NULL, impressions REAL DEFAULT 0, clicks REAL DEFAULT 0, spend REAL DEFAULT 0, conversions REAL DEFAULT 0, PRIMARY KEY(channel,campaign_id,date))`,
       `CREATE TABLE IF NOT EXISTS social_posts (channel TEXT NOT NULL, title TEXT NOT NULL, date TEXT NOT NULL, reach REAL DEFAULT 0, views REAL DEFAULT 0, reactions REAL DEFAULT 0, comments REAL DEFAULT 0, shares REAL DEFAULT 0, clicks REAL DEFAULT 0, followers REAL DEFAULT 0, followers_delta REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(channel,title,date))`,
-      `CREATE TABLE IF NOT EXISTS email_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, date TEXT, status TEXT, sent REAL DEFAULT 0, delivered REAL DEFAULT 0, opened REAL DEFAULT 0, clicked REAL DEFAULT 0, unsub REAL DEFAULT 0, spam REAL DEFAULT 0, errors REAL DEFAULT 0, report_url TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
+      `CREATE TABLE IF NOT EXISTS social_channel_daily (channel TEXT NOT NULL, date TEXT NOT NULL, views REAL DEFAULT 0, visitors REAL DEFAULT 0, reach REAL DEFAULT 0, subscribers_reach REAL DEFAULT 0, subscribed REAL DEFAULT 0, unsubscribed REAL DEFAULT 0, likes REAL DEFAULT 0, comments REAL DEFAULT 0, shares REAL DEFAULT 0, PRIMARY KEY(channel,date))`,
+      `CREATE TABLE IF NOT EXISTS email_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, date TEXT, status TEXT, sent REAL DEFAULT 0, delivered REAL DEFAULT 0, opened REAL DEFAULT 0, opened_all REAL DEFAULT 0, clicked REAL DEFAULT 0, clicked_all REAL DEFAULT 0, unsub REAL DEFAULT 0, spam REAL DEFAULT 0, errors REAL DEFAULT 0, report_url TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS email_links (campaign_id TEXT NOT NULL, url TEXT NOT NULL, clicks REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(campaign_id,url))`,
+      `CREATE TABLE IF NOT EXISTS utm_stats (period_key TEXT NOT NULL, source TEXT NOT NULL, medium TEXT NOT NULL, campaign TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, conversions REAL DEFAULT 0, PRIMARY KEY(period_key,source,medium,campaign))`,
+      `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`
     ];
     for (const sql of creates) await env.DB.prepare(sql).run();
     const alters = [
@@ -172,7 +177,12 @@ async function ensureExtendedSchema(env) {
       `ALTER TABLE traffic_sources ADD COLUMN users INTEGER DEFAULT 0`,
       `ALTER TABLE traffic_sources ADD COLUMN bounce REAL DEFAULT 0`,
       `ALTER TABLE landing_pages ADD COLUMN users INTEGER DEFAULT 0`,
-      `ALTER TABLE landing_pages ADD COLUMN duration REAL DEFAULT 0`
+      `ALTER TABLE landing_pages ADD COLUMN duration REAL DEFAULT 0`,
+      `ALTER TABLE seo_queries ADD COLUMN click_position REAL DEFAULT 0`,
+      `ALTER TABLE ad_campaign_daily ADD COLUMN bounce_rate REAL DEFAULT 0`,
+      `ALTER TABLE ad_campaign_daily ADD COLUMN avg_pageviews REAL DEFAULT 0`,
+      `ALTER TABLE email_campaigns ADD COLUMN opened_all REAL DEFAULT 0`,
+      `ALTER TABLE email_campaigns ADD COLUMN clicked_all REAL DEFAULT 0`
     ];
     for (const sql of alters) await env.DB.prepare(sql).run().catch(() => {});
   })();
@@ -188,54 +198,98 @@ async function status(env) {
   ]);
   const map = Object.fromEntries((logs.results || []).map(x => [x.source, x]));
   const resolved = Object.fromEntries((resolvedRows.results || []).map(x => [x.source, x]));
-  const item = (source, configured, missing, mode = 'api') => ({
-    connected: Boolean(configured), configured: Boolean(configured), missing, mode,
-    lastSync: map[source]?.last_sync || null, status: map[source]?.status || null, message: map[source]?.message || null,
-    resolvedId: resolved[source]?.external_id || null, resolvedLabel: resolved[source]?.label || null
+  const item = (source, configured, missing, mode = 'api', extra = {}) => ({
+    connected: Boolean(configured),
+    configured: Boolean(configured),
+    missing,
+    mode,
+    lastSync: map[source]?.last_sync || null,
+    status: map[source]?.status || null,
+    message: map[source]?.message || null,
+    resolvedId: resolved[source]?.external_id || null,
+    resolvedLabel: resolved[source]?.label || null,
+    ...extra
   });
+
   const yandexBase = Boolean(env.YANDEX_TOKEN);
   const metrikaTarget = Boolean(env.METRIKA_COUNTER_ID || env.SITE_URL);
   const webmasterTarget = Boolean(env.WEBMASTER_HOST_ID || env.SITE_URL);
-  const vkAdsConfigured = Boolean(env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET));
+  const vkAdsReady = Boolean(env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET));
+  const vkAdsPartial = Boolean(env.VK_ADS_CLIENT_SECRET && !env.VK_ADS_CLIENT_ID && !env.VK_ADS_TOKEN);
+  const vkSocialReady = Boolean(env.VK_COMMUNITY_TOKEN);
+
   const integrations = {
-    metrika: item('metrika', yandexBase && metrikaTarget, [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean)),
-    webmaster: item('webmaster', yandexBase && webmasterTarget, [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID'].filter(Boolean)),
-    direct: item('direct', Boolean(env.DIRECT_TOKEN), [!env.DIRECT_TOKEN && 'DIRECT_TOKEN'].filter(Boolean)),
-    vkads: item('vkads', vkAdsConfigured, [!env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_ID && 'VK_ADS_CLIENT_ID', !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_SECRET && 'VK_ADS_CLIENT_SECRET'].filter(Boolean)),
-    unisender: item('unisender', Boolean(env.UNISENDER_API_KEY), [!env.UNISENDER_API_KEY && 'UNISENDER_API_KEY'].filter(Boolean)),
-    vksocial: item('vksocial', false, [], 'manual'),
-    telegram: item('telegram', false, [], 'mtproto'),
-    dzenads: item('dzenads', false, [], 'manual'),
-    dzensocial: item('dzensocial', false, [], 'manual'),
-    maxsocial: item('maxsocial', Boolean(env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID), [!env.MAX_BOT_TOKEN && 'MAX_BOT_TOKEN', !env.MAX_CHANNEL_ID && 'MAX_CHANNEL_ID'].filter(Boolean), 'api')
+    metrika: item('metrika', yandexBase && metrikaTarget,
+      [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean)),
+    webmaster: item('webmaster', yandexBase && webmasterTarget,
+      [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID'].filter(Boolean)),
+    direct: item('direct', yandexBase,
+      [!env.YANDEX_TOKEN && 'YANDEX_TOKEN'].filter(Boolean), 'api',
+      { note: yandexBase ? 'Используется тот же YANDEX_TOKEN. До одобрения заявки Direct API синхронизация может возвращать ошибку доступа.' : null }),
+    vkads: item('vkads', vkAdsReady,
+      [
+        !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_ID && 'VK_ADS_CLIENT_ID',
+        !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_SECRET && 'VK_ADS_CLIENT_SECRET'
+      ].filter(Boolean), 'api',
+      { partial: vkAdsPartial, note: vkAdsPartial ? 'VK_ADS_CLIENT_SECRET уже есть; нужен только VK_ADS_CLIENT_ID как обычная Variable.' : null }),
+    vksocial: item('vksocial', vkSocialReady,
+      [!env.VK_COMMUNITY_TOKEN && 'VK_COMMUNITY_TOKEN'].filter(Boolean), 'api',
+      { note: vkSocialReady && !env.VK_GROUP_ID ? 'ID сообщества приложение попробует определить автоматически по токену. VK_GROUP_ID нужен только как запасной вариант.' : null }),
+    unisender: item('unisender', Boolean(env.UNISENDER_API_KEY),
+      [!env.UNISENDER_API_KEY && 'UNISENDER_API_KEY'].filter(Boolean))
   };
+
+  const runtime = {
+    ADMIN_PASSWORD: Boolean(env.ADMIN_PASSWORD),
+    ADMIN_USERNAME: Boolean(env.ADMIN_USERNAME),
+    SESSION_SECRET: Boolean(env.SESSION_SECRET),
+    SITE_URL: Boolean(env.SITE_URL),
+    YANDEX_TOKEN: Boolean(env.YANDEX_TOKEN),
+    UNISENDER_API_KEY: Boolean(env.UNISENDER_API_KEY),
+    VK_ADS_CLIENT_ID: Boolean(env.VK_ADS_CLIENT_ID),
+    VK_ADS_CLIENT_SECRET: Boolean(env.VK_ADS_CLIENT_SECRET),
+    VK_ADS_TOKEN: Boolean(env.VK_ADS_TOKEN),
+    VK_COMMUNITY_TOKEN: Boolean(env.VK_COMMUNITY_TOKEN),
+    VK_GROUP_ID: Boolean(env.VK_GROUP_ID),
+    METRIKA_COUNTER_ID: Boolean(env.METRIKA_COUNTER_ID),
+    WEBMASTER_HOST_ID: Boolean(env.WEBMASTER_HOST_ID)
+  };
+
   return json({
-    mode: Object.values(integrations).some(x => x.connected) ? 'live' : 'empty', integrations,
+    mode: Object.values(integrations).some(x => x.connected) ? 'live' : 'empty',
+    integrations,
+    runtime,
     siteUrl: env.SITE_URL || null,
     metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.external_id || null,
-    webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.external_id || null
+    webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.external_id || null,
+    vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.external_id || null
   });
 }
 
 async function dashboard(env) {
   const q = async (sql) => (await env.DB.prepare(sql).all()).results || [];
-  const [site, sitePeriodRows, sources, pages, searchEngines, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, email, resolvedRows] = await Promise.all([
+  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, syncLog, resolvedRows] = await Promise.all([
     q(`SELECT date,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,conversions,new_visitors AS newVisitors,email_clicks AS emailClicks,form_submits AS formSubmits FROM daily_site_metrics ORDER BY date`),
     q(`SELECT period_days AS periodDays,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,new_visitors AS newVisitors,conversions,email_clicks AS emailClicks,form_submits AS formSubmits FROM site_period_summary ORDER BY period_days`),
     q(`SELECT name,visits,users,bounce,conversions FROM traffic_sources WHERE period_key=(SELECT MAX(period_key) FROM traffic_sources) ORDER BY visits DESC`),
     q(`SELECT page,title,visits,users,bounce,depth,duration,conversions FROM landing_pages WHERE period_key=(SELECT MAX(period_key) FROM landing_pages) ORDER BY visits DESC LIMIT 150`),
     q(`SELECT name,visits,users FROM search_engines WHERE period_key=(SELECT MAX(period_key) FROM search_engines) ORDER BY visits DESC`),
+    q(`SELECT engine,phrase,visits,users,bounce,depth,duration FROM search_phrases WHERE period_key=(SELECT MAX(period_key) FROM search_phrases) ORDER BY visits DESC LIMIT 200`),
+    q(`SELECT source,medium,campaign,visits,users,bounce,depth,duration,conversions FROM utm_stats WHERE period_key=(SELECT MAX(period_key) FROM utm_stats) ORDER BY visits DESC LIMIT 300`),
     q(`SELECT name,visits,users FROM device_stats WHERE period_key=(SELECT MAX(period_key) FROM device_stats) ORDER BY visits DESC`),
     q(`SELECT name,visits,users FROM region_stats WHERE period_key=(SELECT MAX(period_key) FROM region_stats) ORDER BY visits DESC LIMIT 50`),
     q(`SELECT goal_id AS goalId,name,type,category,reaches,visits,conversion_rate AS conversionRate FROM metrika_goals WHERE period_key=(SELECT MAX(period_key) FROM metrika_goals) ORDER BY reaches DESC`),
-    q(`SELECT query,shows,clicks,ctr,position,delta FROM seo_queries ORDER BY shows DESC LIMIT 1000`),
+    q(`SELECT query,shows,clicks,ctr,position,click_position AS clickPosition,delta FROM seo_queries ORDER BY shows DESC LIMIT 1000`),
     q(`SELECT sqi,excluded_pages AS excludedPages,searchable_pages AS searchablePages,fatal,critical,possible,recommendation,updated_at AS updatedAt FROM seo_summary WHERE id=1`),
     q(`SELECT date,pages_in_search AS pagesInSearch FROM seo_index_history ORDER BY date`),
     q(`SELECT code,severity,state,last_update AS lastUpdate FROM seo_problems ORDER BY CASE severity WHEN 'FATAL' THEN 1 WHEN 'CRITICAL' THEN 2 WHEN 'POSSIBLE_PROBLEM' THEN 3 ELSE 4 END, code`),
     q(`SELECT channel,campaign_id AS campaignId,name,status,native_state AS nativeState,updated_at AS updatedAt FROM ad_campaign_meta ORDER BY channel,name`),
-    q(`SELECT channel,campaign_id AS campaignId,name,date,impressions,clicks,spend,conversions FROM ad_campaign_daily ORDER BY date,channel,name`),
+    q(`SELECT channel,campaign_id AS campaignId,name,date,impressions,clicks,spend,conversions,bounce_rate AS bounceRate,avg_pageviews AS avgPageviews FROM ad_campaign_daily ORDER BY date,channel,name`),
     q(`SELECT channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta AS followersDelta FROM social_posts ORDER BY date DESC`),
-    q(`SELECT id,name,date,status,sent,delivered,opened,clicked,unsub,spam,errors,report_url AS reportUrl FROM email_campaigns ORDER BY date DESC`),
+    q(`SELECT channel,date,views,visitors,reach,subscribers_reach AS subscribersReach,subscribed,unsubscribed,likes,comments,shares FROM social_channel_daily ORDER BY date`),
+    q(`SELECT id,name,date,status,sent,delivered,opened,opened_all AS openedAll,clicked,clicked_all AS clickedAll,unsub,spam,errors,report_url AS reportUrl FROM email_campaigns ORDER BY date DESC`),
+    q(`SELECT campaign_id AS campaignId,url,clicks FROM email_links ORDER BY clicks DESC LIMIT 500`),
+    q(`SELECT source,last_sync AS lastSync,status,message FROM sync_log ORDER BY source`),
     q(`SELECT source,external_id AS externalId,label FROM resolved_integrations`)
   ]);
   const goalMapping = {
@@ -245,10 +299,10 @@ async function dashboard(env) {
   const sitePeriods = Object.fromEntries(sitePeriodRows.map(x => [String(x.periodDays), x]));
   const resolved = Object.fromEntries((resolvedRows || []).map(x => [x.source, x]));
   return json({
-    site, sitePeriods, sources, pages, searchEngines, devices, regions, goals, seo,
+    site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
     seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
-    adsMeta, adsDaily, social, email,
-    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
+    adsMeta, adsDaily, social, socialDaily, email, emailLinks, syncLog,
+    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
   });
 }
 
@@ -257,10 +311,10 @@ async function syncConfigured(env) {
   const jobs = [];
   if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) jobs.push(syncMetrika(env));
   if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) jobs.push(syncWebmaster(env));
-  if (env.DIRECT_TOKEN) jobs.push(syncDirect(env));
+  if (env.YANDEX_TOKEN) jobs.push(syncDirect(env));
   if (env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) jobs.push(syncVkAds(env));
+  if (env.VK_COMMUNITY_TOKEN) jobs.push(syncVkCommunity(env));
   if (env.UNISENDER_API_KEY) jobs.push(syncUnisender(env));
-  if (env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID) jobs.push(syncMax(env));
   await Promise.allSettled(jobs);
 }
 
@@ -270,10 +324,11 @@ async function syncSource(source, env) {
   if (source === 'webmaster') return syncWebmaster(env);
   if (source === 'direct') return syncDirect(env);
   if (source === 'vkads') return syncVkAds(env);
+  if (source === 'vksocial') return syncVkCommunity(env);
   if (source === 'unisender') return syncUnisender(env);
-  if (source === 'maxsocial') return syncMax(env);
   throw new Error('Unknown source');
 }
+
 
 /* -------------------- YANDEX METRIKA -------------------- */
 
@@ -283,7 +338,7 @@ async function syncMetrika(env) {
   const counterId = await resolveMetrikaCounterId(env, headers);
   await saveResolved(env, 'metrika', counterId, env.SITE_URL || `Счётчик ${counterId}`);
   const base = 'https://api-metrika.yandex.net/stat/v1/data';
-  const common = { ids: counterId, date1: '89daysAgo', date2: 'today', accuracy: 'full' };
+  const common = { ids: counterId, date1: '179daysAgo', date2: 'today', accuracy: 'full' };
 
   const goalsInfo = await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(counterId)}/goals`, headers).catch(() => ({ goals: [] }));
   const goals = (goalsInfo.goals || []).filter(g => g?.status !== 'DELETED');
@@ -297,10 +352,12 @@ async function syncMetrika(env) {
   const deviceUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:deviceCategory', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '30' });
   const regionUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:regionArea', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '50' });
   const engineUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:searchEngineName', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '50' });
+  const utmUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:lastSignUTMSource,ym:s:lastSignUTMMedium,ym:s:lastSignUTMCampaign', metrics: 'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds,ym:s:anyGoalReaches', sort: '-ym:s:visits', limit: '300' });
+  const phraseUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:lastSignSearchEngineRootName,ym:s:lastSignSearchPhrase', metrics: 'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds', sort: '-ym:s:visits', limit: '200' });
 
   const results = await Promise.allSettled([
     apiGet(dailyUrl, headers), apiGet(sourceUrl, headers), apiGet(pageUrl, headers),
-    apiGet(deviceUrl, headers), apiGet(regionUrl, headers), apiGet(engineUrl, headers)
+    apiGet(deviceUrl, headers), apiGet(regionUrl, headers), apiGet(engineUrl, headers), apiGet(utmUrl, headers), apiGet(phraseUrl, headers)
   ]);
   const dailyRes = requiredResult(results[0], 'дневная статистика Метрики');
   const sourceRes = optionalResult(results[1]);
@@ -308,6 +365,8 @@ async function syncMetrika(env) {
   const deviceRes = optionalResult(results[3]);
   const regionRes = optionalResult(results[4]);
   const engineRes = optionalResult(results[5]);
+  const utmRes = optionalResult(results[6]);
+  const phraseRes = optionalResult(results[7]);
 
   const dailyGoalMap = new Map();
   if (selected.length) {
@@ -350,6 +409,27 @@ async function syncMetrika(env) {
   await replaceSimpleDimension(env, 'region_stats', periodKey, regionRes.data || []);
   await replaceSimpleDimension(env, 'search_engines', periodKey, engineRes.data || []);
 
+  await env.DB.prepare('DELETE FROM utm_stats WHERE period_key=?').bind(periodKey).run();
+  for (const row of utmRes.data || []) {
+    const source = dimensionName(row.dimensions?.[0]) || '(не задано)';
+    const medium = dimensionName(row.dimensions?.[1]) || '(не задано)';
+    const campaign = dimensionName(row.dimensions?.[2]) || '(не задано)';
+    const m = row.metrics || [];
+    if (source === '(не задано)' && medium === '(не задано)' && campaign === '(не задано)') continue;
+    await env.DB.prepare(`INSERT INTO utm_stats(period_key,source,medium,campaign,visits,users,bounce,depth,duration,conversions) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+      .bind(periodKey,source,medium,campaign,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])).run();
+  }
+
+  await env.DB.prepare('DELETE FROM search_phrases WHERE period_key=?').bind(periodKey).run();
+  for (const row of phraseRes.data || []) {
+    const engine = dimensionName(row.dimensions?.[0]) || 'Поиск';
+    const phrase = dimensionName(row.dimensions?.[1]) || '';
+    const m = row.metrics || [];
+    if (!phrase) continue;
+    await env.DB.prepare(`INSERT INTO search_phrases(period_key,engine,phrase,visits,users,bounce,depth,duration) VALUES(?,?,?,?,?,?,?,?)`)
+      .bind(periodKey,engine,phrase,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4])).run();
+  }
+
   await env.DB.prepare('DELETE FROM metrika_goals WHERE period_key=?').bind(periodKey).run();
   const cutoff30 = new Date(); cutoff30.setHours(0,0,0,0); cutoff30.setDate(cutoff30.getDate()-29);
   const totalVisits = num(sourceRes.totals?.[0]) || (dailyRes.data || []).filter(r => { const d=dimensionName(r.dimensions?.[0]); return d && new Date(`${d}T12:00:00`) >= cutoff30; }).reduce((a,r)=>a+num(r.metrics?.[0]),0);
@@ -376,8 +456,8 @@ async function syncMetrika(env) {
       .bind(periodDays,num(t[0]),num(t[1]),num(t[2]),num(t[3]),num(t[4]),num(t[5]),num(t[6]),num(t[7]),emailClicks,formSubmits).run();
   }
 
-  await logSync(env, 'metrika', 'ok', `Метрика: ${dailyRes.data?.length || 0} дней, ${goals.length} целей`);
-  return { message: `Метрика обновлена: ${dailyRes.data?.length || 0} дней, ${goals.length} целей. Email и формы считаются только по найденным целям.` };
+  await logSync(env, 'metrika', 'ok', `Метрика: ${dailyRes.data?.length || 0} дней, ${goals.length} целей, UTM ${utmRes.data?.length || 0}, поисковых фраз ${phraseRes.data?.length || 0}`);
+  return { message: `Метрика обновлена: ${dailyRes.data?.length || 0} дней, ${goals.length} целей, ${utmRes.data?.length || 0} UTM-связок и ${phraseRes.data?.length || 0} поисковых фраз.` };
 }
 
 function classifyGoal(goal) {
@@ -419,7 +499,7 @@ async function syncWebmaster(env) {
   const prevStart = new Date(); prevStart.setDate(prevStart.getDate() - 59);
   const prevEnd = new Date(); prevEnd.setDate(prevEnd.getDate() - 30);
   const historyStart = new Date(); historyStart.setDate(historyStart.getDate() - 89);
-  const params = { order_by: 'TOTAL_SHOWS', query_indicator: ['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION'], date_from: dateOnly(start), date_to: dateOnly(end), limit: '500' };
+  const params = { order_by: 'TOTAL_SHOWS', query_indicator: ['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'], date_from: dateOnly(start), date_to: dateOnly(end), limit: '500' };
 
   const [current, prev, summary, diagnostics, indexHistory] = await Promise.all([
     apiGet(withParams(`${root}/search-queries/popular`, params), headers),
@@ -433,12 +513,12 @@ async function syncWebmaster(env) {
   await env.DB.prepare('DELETE FROM seo_queries').run();
   for (const q of current.queries || []) {
     const ind = q.indicators || {};
-    const shows = num(ind.TOTAL_SHOWS), clicks = num(ind.TOTAL_CLICKS), position = num(ind.AVG_SHOW_POSITION);
+    const shows = num(ind.TOTAL_SHOWS), clicks = num(ind.TOTAL_CLICKS), position = num(ind.AVG_SHOW_POSITION), clickPosition = num(ind.AVG_CLICK_POSITION);
     const prevQ = prevByText.get(q.query_text), prevPos = num(prevQ?.indicators?.AVG_SHOW_POSITION);
     const delta = prevPos && position ? prevPos - position : 0;
     const ctr = shows ? clicks / shows * 100 : 0;
-    await env.DB.prepare(`INSERT INTO seo_queries(query,shows,clicks,ctr,position,delta,updated_at) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
-      .bind(q.query_text,shows,clicks,ctr,position,delta).run();
+    await env.DB.prepare(`INSERT INTO seo_queries(query,shows,clicks,ctr,position,click_position,delta,updated_at) VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      .bind(q.query_text,shows,clicks,ctr,position,clickPosition,delta).run();
   }
 
   if (summary) {
@@ -468,15 +548,20 @@ async function syncWebmaster(env) {
 /* -------------------- YANDEX DIRECT -------------------- */
 
 async function syncDirect(env) {
-  if (!env.DIRECT_TOKEN) throw new Error('Добавьте DIRECT_TOKEN. Для API Яндекс Директа также нужен одобренный доступ приложения.');
-  const headers = { 'Authorization': `Bearer ${env.DIRECT_TOKEN}`, 'Accept-Language': 'ru', 'Content-Type': 'application/json' };
-  if (env.DIRECT_CLIENT_LOGIN) headers['Client-Login'] = env.DIRECT_CLIENT_LOGIN;
+  if (!env.YANDEX_TOKEN) throw new Error('Добавьте YANDEX_TOKEN. Для Директа у этого OAuth-приложения также должен быть одобрен полный доступ к Direct API.');
+  const headers = { 'Authorization': `Bearer ${env.YANDEX_TOKEN}`, 'Accept-Language': 'ru', 'Content-Type': 'application/json' };
 
   const campaignResponse = await fetch('https://api.direct.yandex.com/json/v501/campaigns', {
     method: 'POST', headers,
     body: JSON.stringify({ method: 'get', params: { SelectionCriteria: {}, FieldNames: ['Id','Name','State','Status','StatusPayment','Type'] } })
   });
-  if (!campaignResponse.ok) throw new Error(`Direct campaigns API ${campaignResponse.status}: ${(await campaignResponse.text()).slice(0,500)}`);
+  if (!campaignResponse.ok) {
+    const detail = (await campaignResponse.text()).slice(0,700);
+    if ([401,403].includes(campaignResponse.status)) {
+      throw new Error(`Яндекс Директ пока не дал доступ к API (${campaignResponse.status}). YANDEX_TOKEN найден; проверьте, что заявка на полный доступ одобрена и токен выдан с правом direct:api. ${detail}`);
+    }
+    throw new Error(`Direct campaigns API ${campaignResponse.status}: ${detail}`);
+  }
   const campaignJson = await campaignResponse.json();
   if (campaignJson.error) throw new Error(`Direct campaigns: ${campaignJson.error.error_detail || campaignJson.error.error_string || 'ошибка'}`);
   const campaigns = campaignJson.result?.Campaigns || [];
@@ -490,7 +575,7 @@ async function syncDirect(env) {
   const end = new Date(), start = new Date(); start.setDate(start.getDate() - 89);
   const reportBody = { params: {
     SelectionCriteria: { DateFrom: dateOnly(start), DateTo: dateOnly(end) },
-    FieldNames: ['Date','CampaignId','CampaignName','Impressions','Clicks','Cost','Conversions'],
+    FieldNames: ['Date','CampaignId','CampaignName','Impressions','Clicks','Ctr','Cost','AvgCpc','Conversions','ConversionRate','CostPerConversion','BounceRate','AvgPageviews'],
     ReportName: `CS Marketing ${Date.now()}`,
     ReportType: 'CAMPAIGN_PERFORMANCE_REPORT', DateRangeType: 'CUSTOM_DATE', Format: 'TSV', IncludeVAT: 'YES', IncludeDiscount: 'YES'
   }};
@@ -508,9 +593,9 @@ async function syncDirect(env) {
     const id = String(r.CampaignId || ''); if (!id || !r.Date) continue;
     const c = metaById.get(id);
     const name = r.CampaignName || c?.Name || `Кампания ${id}`;
-    await env.DB.prepare(`INSERT INTO ad_campaign_daily(channel,campaign_id,name,date,impressions,clicks,spend,conversions) VALUES('Яндекс Директ',?,?,?,?,?,?,?)
-      ON CONFLICT(channel,campaign_id,date) DO UPDATE SET name=excluded.name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions`)
-      .bind(id,name,r.Date,num(r.Impressions),num(r.Clicks),num(r.Cost),num(r.Conversions)).run();
+    await env.DB.prepare(`INSERT INTO ad_campaign_daily(channel,campaign_id,name,date,impressions,clicks,spend,conversions,bounce_rate,avg_pageviews) VALUES('Яндекс Директ',?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(channel,campaign_id,date) DO UPDATE SET name=excluded.name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions,bounce_rate=excluded.bounce_rate,avg_pageviews=excluded.avg_pageviews`)
+      .bind(id,name,r.Date,num(r.Impressions),num(r.Clicks),num(r.Cost),num(r.Conversions),num(r.BounceRate),num(r.AvgPageviews)).run();
   }
   await logSync(env,'direct','ok',`Директ: ${campaigns.length} кампаний, ${rows.length} строк статистики`);
   return { message: `Яндекс Директ обновлён: ${campaigns.length} кампаний, ${rows.length} дневных строк. Расходы берутся только из API.` };
@@ -624,6 +709,119 @@ function extractVkStatsRows(payload) {
   return out;
 }
 
+
+/* -------------------- VK COMMUNITY -------------------- */
+
+async function syncVkCommunity(env) {
+  if (!env.VK_COMMUNITY_TOKEN) throw new Error('Добавьте VK_COMMUNITY_TOKEN в Cloudflare Runtime Secrets.');
+  const token = String(env.VK_COMMUNITY_TOKEN);
+  const group = await resolveVkCommunity(env, token);
+  const groupId = String(group.id);
+  const groupName = String(group.name || `VK ${groupId}`);
+  await saveResolved(env, 'vksocial', groupId, groupName);
+
+  const ownerId = `-${groupId}`;
+  const wall = await vkApi('wall.get', {
+    owner_id: ownerId,
+    count: 100,
+    filter: 'owner',
+    extended: 0
+  }, token);
+  const posts = Array.isArray(wall?.items) ? wall.items : [];
+
+  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='VK'`).run();
+  for (const post of posts) {
+    const d = new Date(num(post?.date) * 1000);
+    if (Number.isNaN(d.getTime())) continue;
+    const text = String(post?.text || '').replace(/\s+/g, ' ').trim();
+    const title = text ? text.slice(0, 140) : `Пост VK ${post?.id || post?.date}`;
+    const views = num(post?.views?.count);
+    const reactions = num(post?.likes?.count);
+    const comments = num(post?.comments?.count);
+    const shares = num(post?.reposts?.count);
+    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,updated_at)
+      VALUES('VK',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,updated_at=CURRENT_TIMESTAMP`)
+      .bind(title,dateOnly(d),0,views,reactions,comments,shares,0,num(group.members_count),0).run();
+  }
+
+  const end = new Date();
+  const start = new Date(); start.setDate(start.getDate() - 89);
+  const stats = await vkApi('stats.get', {
+    group_id: groupId,
+    timestamp_from: Math.floor(start.getTime()/1000),
+    timestamp_to: Math.floor((end.getTime()+86399000)/1000),
+    interval: 'day',
+    stats_groups: 'visitors,reach,activity'
+  }, token).catch(() => null);
+
+  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='VK'`).run();
+  let statsRows = 0;
+  if (Array.isArray(stats)) {
+    for (const row of stats) {
+      const rawDate = row?.period_from ?? row?.timestamp_from ?? row?.date;
+      const stamp = num(rawDate);
+      const date = stamp > 1000000000 ? dateOnly(new Date(stamp * 1000)) : String(rawDate || '').slice(0,10);
+      if (!date) continue;
+      const visitorsBlock = row?.visitors || {};
+      const reachBlock = row?.reach || {};
+      const activity = row?.activity || {};
+      const views = num(visitorsBlock.views ?? row?.views);
+      const visitors = num(visitorsBlock.visitors ?? row?.visitors_count);
+      const reach = num(reachBlock.reach ?? reachBlock.total_reach ?? row?.reach_count ?? (typeof row?.reach === 'number' ? row.reach : 0));
+      const subscribersReach = num(reachBlock.reach_subscribers ?? reachBlock.subscribers_reach);
+      const subscribed = num(activity.subscribed ?? visitorsBlock.subscribed ?? row?.subscribed);
+      const unsubscribed = num(activity.unsubscribed ?? visitorsBlock.unsubscribed ?? row?.unsubscribed);
+      const likes = num(activity.likes ?? row?.likes);
+      const comments = num(activity.comments ?? row?.comments);
+      const shares = num(activity.copies ?? activity.reposts ?? row?.shares);
+      await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
+        VALUES('VK',?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,visitors=excluded.visitors,reach=excluded.reach,subscribers_reach=excluded.subscribers_reach,subscribed=excluded.subscribed,unsubscribed=excluded.unsubscribed,likes=excluded.likes,comments=excluded.comments,shares=excluded.shares`)
+        .bind(date,views,visitors,reach,subscribersReach,subscribed,unsubscribed,likes,comments,shares).run();
+      statsRows++;
+    }
+  }
+
+  const message = statsRows
+    ? `VK обновлён: ${posts.length} последних постов и ${statsRows} дней статистики сообщества.`
+    : `VK обновлён: ${posts.length} последних постов. Детальная статистика сообщества недоступна для этого токена — публикации всё равно загружены.`;
+  await logSync(env, 'vksocial', statsRows ? 'ok' : 'partial', message);
+  return { message };
+}
+
+async function resolveVkCommunity(env, token) {
+  if (env.VK_GROUP_ID) {
+    const response = await vkApi('groups.getById', { group_ids: String(env.VK_GROUP_ID), fields: 'members_count,screen_name' }, token);
+    const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
+    if (items[0]?.id) return items[0];
+  }
+
+  const auto = await vkApi('groups.getById', { fields: 'members_count,screen_name' }, token).catch(() => null);
+  const autoItems = Array.isArray(auto?.groups) ? auto.groups : Array.isArray(auto) ? auto : [];
+  if (autoItems.length === 1 && autoItems[0]?.id) return autoItems[0];
+
+  throw new Error('VK_COMMUNITY_TOKEN найден, но ID сообщества не удалось определить автоматически. Добавьте VK_GROUP_ID как обычную Cloudflare Variable.');
+}
+
+async function vkApi(method, params, token) {
+  const body = new URLSearchParams();
+  for (const [k,v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') body.set(k, String(v));
+  body.set('access_token', token);
+  body.set('v', '5.199');
+  const res = await fetch(`https://api.vk.com/method/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: body.toString()
+  });
+  const text = await res.text();
+  let data = {};
+  try { data = JSON.parse(text); } catch {}
+  if (!res.ok) throw new Error(`VK API ${method} ${res.status}: ${text.slice(0,400)}`);
+  if (data?.error) throw new Error(`VK API ${method}: ${data.error.error_msg || data.error.error_code || 'ошибка'}`);
+  return data?.response;
+}
+
 /* -------------------- UNISENDER -------------------- */
 
 async function syncUnisender(env) {
@@ -636,6 +834,7 @@ async function syncUnisender(env) {
   const campaigns = Array.isArray(list.result) ? list.result : [];
 
   await env.DB.prepare('DELETE FROM email_campaigns').run();
+  await env.DB.prepare('DELETE FROM email_links').run();
   let completed = 0;
   for (const group of chunks(campaigns.slice(0,200), 8)) {
     const stats = await Promise.all(group.map(async c => {
@@ -644,40 +843,32 @@ async function syncUnisender(env) {
       return { c, s: data.result || {} };
     }));
     for (const { c, s } of stats) {
-      const sent = num(s.sent), delivered = num(s.delivered), opened = num(s.read_unique), clicked = num(s.clicked_unique), unsub = num(s.unsubscribed), spam = num(s.spam);
+      const sent = num(s.sent), delivered = num(s.delivered), opened = num(s.read_unique), openedAll = num(s.read_all), clicked = num(s.clicked_unique), clickedAll = num(s.clicked_all), unsub = num(s.unsubscribed), spam = num(s.spam);
       const errors = Math.max(0, sent - delivered);
-      await env.DB.prepare(`INSERT INTO email_campaigns(id,name,date,status,sent,delivered,opened,clicked,unsub,spam,errors,report_url,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
-        .bind(String(c.id),String(c.subject || `Рассылка ${c.id}`),String(c.start_time || '').slice(0,10),String(c.status || ''),sent,delivered,opened,clicked,unsub,spam,errors,String(c.stats_url || '')).run();
+      await env.DB.prepare(`INSERT INTO email_campaigns(id,name,date,status,sent,delivered,opened,opened_all,clicked,clicked_all,unsub,spam,errors,report_url,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+        .bind(String(c.id),String(c.subject || `Рассылка ${c.id}`),String(c.start_time || '').slice(0,10),String(c.status || ''),sent,delivered,opened,openedAll,clicked,clickedAll,unsub,spam,errors,String(c.stats_url || '')).run();
       completed++;
     }
   }
+  // Для последних рассылок сохраняем агрегированные клики по ссылкам. Ошибка этого дополнительного отчёта не ломает основную синхронизацию.
+  for (const c of campaigns.slice(0, 30)) {
+    const linkData = await apiGet(withParams('https://api.unisender.com/ru/api/getVisitedLinks', { format:'json', api_key:env.UNISENDER_API_KEY, campaign_id:c.id, group:1 }), {}).catch(() => null);
+    const result = linkData?.result;
+    if (!result || !Array.isArray(result.fields) || !Array.isArray(result.data)) continue;
+    const urlIndex = result.fields.indexOf('url');
+    const countIndex = result.fields.indexOf('count');
+    if (urlIndex < 0) continue;
+    for (const row of result.data) {
+      const url = String(row?.[urlIndex] || '').trim(); if (!url) continue;
+      const clicks = countIndex >= 0 ? num(row?.[countIndex]) : 1;
+      await env.DB.prepare(`INSERT INTO email_links(campaign_id,url,clicks,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(campaign_id,url) DO UPDATE SET clicks=email_links.clicks+excluded.clicks,updated_at=CURRENT_TIMESTAMP`)
+        .bind(String(c.id),url,clicks).run();
+    }
+  }
+
   await logSync(env,'unisender','ok',`UniSender: ${completed} рассылок`);
   return { message: `UniSender обновлён: ${completed} рассылок за последние 90 дней.` };
-}
-
-/* -------------------- MAX -------------------- */
-
-async function syncMax(env) {
-  if (!env.MAX_BOT_TOKEN || !env.MAX_CHANNEL_ID) throw new Error('Добавьте MAX_BOT_TOKEN как Secret и MAX_CHANNEL_ID как Variable. Бот должен быть администратором канала.');
-  const headers = { Authorization: String(env.MAX_BOT_TOKEN) };
-  const url = withParams('https://platform-api2.max.ru/messages', { chat_id: String(env.MAX_CHANNEL_ID), count: 100 });
-  const payload = await apiGet(url, headers);
-  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-  const cutoff = Date.now() - 90 * 86400000;
-  const recent = messages.filter(m => num(m?.timestamp) >= cutoff);
-  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='MAX'`).run();
-  for (const m of recent) {
-    const date = new Date(num(m.timestamp));
-    if (Number.isNaN(date.getTime())) continue;
-    const text = String(m?.body?.text || '').replace(/\s+/g,' ').trim();
-    const title = text ? text.slice(0,140) : `Пост MAX ${String(m?.body?.mid || m?.id || m.timestamp)}`;
-    const stat = m?.stat || {};
-    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,updated_at) VALUES('MAX',?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,updated_at=CURRENT_TIMESTAMP`)
-      .bind(title,dateOnly(date),num(stat.views),num(stat.views),num(stat.reactions),num(stat.comments),num(stat.reposts ?? stat.shares),0,0,0).run();
-  }
-  await logSync(env,'maxsocial','ok',`MAX: ${recent.length} последних постов из доступных 100`);
-  return { message: `MAX обновлён: ${recent.length} постов за последние 90 дней (из последних 100 доступных API).` };
 }
 
 /* -------------------- IMPORTS -------------------- */
