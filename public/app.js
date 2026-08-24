@@ -85,7 +85,7 @@
   let apiStatus = { mode: 'demo', integrations: {} };
   let currentUser = null;
 
-  const AUTH_TOKEN_KEY = 'cs-marketing-auth-token';
+  const AUTH_TOKEN_KEY = 'cs-marketing-auth-token-v4';
 
   function getFallbackToken() {
     try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; }
@@ -95,6 +95,7 @@
     try {
       if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
       else sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      sessionStorage.removeItem('cs-marketing-auth-token');
     } catch {}
   }
 
@@ -102,13 +103,7 @@
     const headers = new Headers(options.headers || {});
     const token = getFallbackToken();
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(url, { ...options, headers, credentials: 'include', cache: options.cache || 'no-store' });
-    if (response.status === 401) {
-      setFallbackToken('');
-      showAuthScreen('Сессия закончилась. Войдите снова.');
-      throw new Error('Требуется авторизация');
-    }
-    return response;
+    return fetch(url, { ...options, headers, credentials: 'include', cache: options.cache || 'no-store' });
   }
 
   function showAuthScreen(message = '') {
@@ -132,22 +127,25 @@
     await loadLiveData();
   }
 
+  async function checkSession(token = getFallbackToken()) {
+    const headers = new Headers({ Accept: 'application/json' });
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch('/api/auth/session', { headers, credentials: 'include', cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  }
+
   async function initAuth() {
     try {
-      const headers = new Headers({ Accept: 'application/json' });
-      const token = getFallbackToken();
-      if (token) headers.set('Authorization', `Bearer ${token}`);
-      const response = await fetch('/api/auth/session', { headers, credentials: 'include', cache: 'no-store' });
-      if (!response.ok) {
-        setFallbackToken('');
-        showAuthScreen();
+      const { response, data } = await checkSession();
+      if (response.ok && data.authenticated) {
+        await showApp(data.user);
         return;
       }
-      const data = await response.json();
-      if (data.authenticated) await showApp(data.user);
-      else showAuthScreen();
-    } catch {
-      showAuthScreen('Не удалось проверить авторизацию. Запускай приложение через Cloudflare Worker, а не как обычный HTML-файл.');
+      setFallbackToken('');
+      showAuthScreen();
+    } catch (err) {
+      showAuthScreen(`Не удалось связаться с сервером авторизации: ${err?.message || 'ошибка сети'}`);
     }
   }
 
@@ -169,17 +167,18 @@
         body: JSON.stringify({ username, password })
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Неверный логин или пароль');
-      if (data.token) setFallbackToken(data.token);
+      if (!response.ok) throw new Error(data.error || `Ошибка входа (${response.status})`);
+      if (!data.token) throw new Error('Сервер принял пароль, но не вернул сессионный токен.');
+      setFallbackToken(data.token);
 
-      const verifyHeaders = new Headers({ Accept: 'application/json' });
-      if (data.token) verifyHeaders.set('Authorization', `Bearer ${data.token}`);
-      const verify = await fetch('/api/auth/session', { headers: verifyHeaders, credentials: 'include', cache: 'no-store' });
-      if (!verify.ok) throw new Error('Вход принят, но сервер не смог сохранить сессию.');
-      const verified = await verify.json().catch(() => ({}));
-      await showApp(verified.user || data.user);
+      const verified = await checkSession(data.token);
+      if (!verified.response.ok || !verified.data.authenticated) {
+        setFallbackToken('');
+        throw new Error(`Вход принят, но проверка сессии не прошла: ${verified.data.reason || verified.response.status}`);
+      }
+      await showApp(verified.data.user || data.user);
     } catch (err) {
-      error.textContent = err.message || 'Не удалось войти';
+      error.textContent = err?.message || 'Не удалось войти';
       error.hidden = false;
       document.getElementById('passwordInput').select();
     } finally {
