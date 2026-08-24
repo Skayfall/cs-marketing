@@ -1,6 +1,7 @@
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const AUTH_HEADER_PREFIX = 'Bearer ';
 
 export default {
   async fetch(request, env, ctx) {
@@ -56,8 +57,8 @@ async function login(request, env, url) {
   const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const token = await createSessionToken(expectedUser, expires, env.SESSION_SECRET);
   const secure = url.protocol === 'https:' ? '; Secure' : '';
-  const cookie = `${SESSION_COOKIE}=${token}; HttpOnly${secure}; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
-  return json({ authenticated: true, user: expectedUser }, 200, { 'set-cookie': cookie });
+  const cookie = `${SESSION_COOKIE}=${token}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
+  return json({ authenticated: true, user: expectedUser, token }, 200, { 'set-cookie': cookie });
 }
 
 async function sessionStatus(request, env) {
@@ -68,7 +69,7 @@ async function sessionStatus(request, env) {
 
 function logout(url) {
   const secure = url.protocol === 'https:' ? '; Secure' : '';
-  return json({ authenticated: false }, 200, { 'set-cookie': `${SESSION_COOKIE}=; HttpOnly${secure}; SameSite=Strict; Path=/; Max-Age=0` });
+  return json({ authenticated: false }, 200, { 'set-cookie': `${SESSION_COOKIE}=; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=0` });
 }
 
 async function status(env) {
@@ -179,7 +180,10 @@ async function importRows(request, env){
 
 async function verifySession(request, env) {
   if (!env.SESSION_SECRET) return null;
-  const token = readCookie(request.headers.get('cookie') || '', SESSION_COOKIE);
+  const cookieToken = readCookie(request.headers.get('cookie') || '', SESSION_COOKIE);
+  const auth = request.headers.get('authorization') || '';
+  const bearerToken = auth.startsWith(AUTH_HEADER_PREFIX) ? auth.slice(AUTH_HEADER_PREFIX.length).trim() : '';
+  const token = cookieToken || bearerToken;
   if (!token) return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
