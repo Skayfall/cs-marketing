@@ -62,10 +62,11 @@ async function login(request, env, url) {
 }
 
 async function sessionStatus(request, env) {
-  const session = await verifySession(request, env);
-  if (!session) return json({ authenticated: false }, 401);
-  return json({ authenticated: true, user: session.user });
+  const result = await verifySessionDetailed(request, env);
+  if (!result.ok) return json({ authenticated: false, reason: result.reason }, 401);
+  return json({ authenticated: true, user: result.user, expires: result.exp });
 }
+
 
 function logout(url) {
   const secure = url.protocol === 'https:' ? '; Secure' : '';
@@ -179,44 +180,46 @@ async function importRows(request, env){
 }
 
 async function verifySession(request, env) {
-  if (!env.SESSION_SECRET) return null;
+  const result = await verifySessionDetailed(request, env);
+  return result.ok ? { user: result.user, exp: result.exp } : null;
+}
+
+async function verifySessionDetailed(request, env) {
+  if (!env.SESSION_SECRET) return { ok: false, reason: 'SESSION_SECRET отсутствует' };
   const cookieToken = readCookie(request.headers.get('cookie') || '', SESSION_COOKIE);
   const auth = request.headers.get('authorization') || '';
   const bearerToken = auth.startsWith(AUTH_HEADER_PREFIX) ? auth.slice(AUTH_HEADER_PREFIX.length).trim() : '';
-  const token = cookieToken || bearerToken;
-  if (!token) return null;
+  const token = bearerToken || cookieToken;
+  if (!token) return { ok: false, reason: 'Сессионный токен не передан' };
+
   const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [payload64, signature64] = parts;
-  const valid = await verifySignature(payload64, signature64, env.SESSION_SECRET);
-  if (!valid) return null;
-  let payload;
-  try { payload = JSON.parse(decodeBase64Url(payload64)); } catch { return null; }
-  if (!payload?.user || !payload?.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+  if (parts.length !== 3) return { ok: false, reason: 'Неверный формат сессии' };
+  const [userEncoded, expRaw, signature] = parts;
+  let user;
+  try { user = decodeURIComponent(userEncoded); } catch { return { ok: false, reason: 'Не удалось прочитать пользователя' }; }
+  const exp = Number(expRaw);
+  if (!Number.isFinite(exp)) return { ok: false, reason: 'Неверный срок сессии' };
+  if (exp < Math.floor(Date.now() / 1000)) return { ok: false, reason: 'Сессия истекла' };
+
   const expectedUser = String(env.ADMIN_USERNAME || 'admin');
-  if (!(await secureTextEqual(String(payload.user), expectedUser))) return null;
-  return payload;
+  if (!(await secureTextEqual(user, expectedUser))) return { ok: false, reason: 'Пользователь сессии не совпадает' };
+  const expectedSignature = await sessionSignature(user, exp, env.SESSION_SECRET);
+  if (!(await secureTextEqual(signature, expectedSignature))) return { ok: false, reason: 'Подпись сессии не прошла проверку' };
+  return { ok: true, user, exp };
 }
 
 async function createSessionToken(user, exp, secret) {
-  const payload64 = encodeBase64Url(JSON.stringify({ user, exp }));
-  const signature64 = await sign(payload64, secret);
-  return `${payload64}.${signature64}`;
+  const signature = await sessionSignature(user, exp, secret);
+  return `${encodeURIComponent(user)}.${exp}.${signature}`;
 }
 
-async function sign(payload, secret) {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-  return bytesToBase64Url(new Uint8Array(signature));
+async function sessionSignature(user, exp, secret) {
+  return sha256Hex(`${String(user)}|${String(exp)}|${String(secret)}`);
 }
 
-async function verifySignature(payload, signature64, secret) {
-  try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
-    return await crypto.subtle.verify('HMAC', key, base64UrlToBytes(signature64), encoder.encode(payload));
-  } catch { return false; }
+async function sha256Hex(value) {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value))));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function secureTextEqual(a, b) {
