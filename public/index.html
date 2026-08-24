@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#0f172a" />
   <title>CS Marketing by skayfall</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-  <link rel="stylesheet" href="/styles.css?v=1.0.0" />
+  <link rel="stylesheet" href="/styles.css?v=1.1.0" />
 </head>
 <body>
   <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
     <div class="auth-card">
       <div class="auth-brand"><div class="auth-mark">CS</div><div><div class="auth-product">CS Marketing</div><div class="auth-byline">by skayfall</div></div></div>
-      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Сайт, SEO, реклама, VK и email собраны в одном рабочем кабинете.</p></div>
+      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Сайт, SEO, реклама, VK, Telegram, MAX и email собраны в одном рабочем кабинете.</p></div>
       <form class="auth-form" id="loginForm">
         <label>Логин<input class="input auth-input" id="loginInput" name="username" autocomplete="username" required /></label>
         <label>Пароль<input class="input auth-input" id="passwordInput" name="password" type="password" autocomplete="current-password" required /></label>
@@ -120,12 +120,17 @@
 
       <section id="social" class="view">
         <div class="metric-grid" id="socialMetrics"></div>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Каналы</div><h3>VK, Telegram и MAX в одном сравнении</h3></div><span class="muted">Сырые просмотры между площадками сравниваются осторожно: приложение дополнительно считает результат относительно обычного уровня каждого канала.</span></div><div id="socialChannelCompare" class="compare-grid social-compare"></div></article>
         <div class="two-col wide-left">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">VK-сообщество</div><h3>Охват, просмотры и посетители</h3></div></div><div class="chart-wrap"><canvas id="socialDailyChart"></canvas></div></article>
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика контента</div><h3>Просмотры публикаций по площадкам</h3></div></div><div class="chart-wrap"><canvas id="socialDailyChart"></canvas></div></article>
           <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий приложения</div><h3>Что происходит с контентом</h3></div></div><div id="contentInsights" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Лучшие публикации</div><h3>Что реально получает реакцию</h3></div></div><div id="topPostCards" class="top-post-grid"></div></article>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Публикации</div><h3>Детальная статистика VK</h3></div></div><div class="table-scroll"><table><thead><tr><th>Публикация</th><th>Дата</th><th>Просмотры</th><th>Реакции</th><th>Комментарии</th><th>Репосты</th><th>ER по просмотрам</th><th>Оценка</th></tr></thead><tbody id="socialTable"></tbody></table></div></article>
+        <div class="two-col">
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Темы</div><h3>Какие рубрики работают лучше</h3></div></div><div id="contentThemeGrid" class="compare-grid"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Форматы</div><h3>Текст, фото, видео и интерактив</h3></div></div><div id="contentFormatGrid" class="compare-grid"></div></article>
+        </div>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Лучшие публикации</div><h3>Что выбивается вверх относительно своего канала</h3></div></div><div id="topPostCards" class="top-post-grid"></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Публикации</div><h3>Единая лента контента</h3></div></div><div class="table-scroll"><table><thead><tr><th>Канал</th><th>Публикация</th><th>Тема</th><th>Формат</th><th>Дата</th><th>Просмотры</th><th>Реакции</th><th>Комментарии</th><th>Репосты</th><th>Индекс</th><th>Оценка</th></tr></thead><tbody id="socialTable"></tbody></table></div></article>
       </section>
 
       <section id="email" class="view">
@@ -149,7 +154,7 @@
         <div class="report-builder">
           <article class="panel"><div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Понятный отчёт руководителю</h3></div></div>
             <div class="form-grid"><label>Название<input class="input" id="reportName" value="Маркетинговый отчёт ПТГ «Центр Сантехники»" /></label><label>Период<select class="select" id="reportPeriod"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></label></div>
-            <div class="check-grid"><label><input type="checkbox" checked value="summary" class="reportCheck" /> Резюме</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> VK</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="plan" class="reportCheck" /> План действий</label></div>
+            <div class="check-grid"><label><input type="checkbox" checked value="summary" class="reportCheck" /> Резюме</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> Соцсети</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="plan" class="reportCheck" /> План действий</label></div>
             <div class="button-row"><button class="primary-btn" id="generateReportBtn">Скачать PDF</button><button class="secondary-btn" id="downloadCommentBtn">Скачать комментарий .txt</button><button class="secondary-btn" id="downloadCsvBtn">CSV</button><button class="secondary-btn" id="downloadJsonBtn">JSON</button></div>
           </article>
           <article class="panel"><div class="eyebrow">Предпросмотр</div><div id="reportPreview" class="report-preview rich-preview"></div></article>
@@ -158,7 +163,7 @@
       </section>
 
       <section id="integrations" class="view">
-        <article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Конфигурация рассчитана именно на текущий набор Cloudflare Runtime: Яндекс, VK Реклама, VK-сообщество и UniSender.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
+        <article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Конфигурация объединяет Яндекс, VK Рекламу, VK-сообщество, Telegram, MAX и UniSender. Для Telegram достаточно публичной ссылки; MAX подключается через Bot API.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
         <div class="integration-grid" id="integrationGrid"></div>
         <article class="panel"><div class="panel-head"><div><div class="eyebrow">Runtime variables & secrets</div><h3>Проверка конфигурации</h3></div></div><div id="runtimeSummary" class="runtime-summary"></div><div class="table-scroll"><table><thead><tr><th>Параметр</th><th>Тип</th><th>Статус</th><th>Используется для</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
         <article class="panel"><div class="panel-head"><div><div class="eyebrow">Журнал</div><h3>Последние синхронизации</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Когда</th><th>Статус</th><th>Комментарий</th></tr></thead><tbody id="syncLogTable"></tbody></table></div></article>
@@ -172,6 +177,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
-  <script src="/app.js?v=1.0.0"></script>
+  <script src="/app.js?v=1.1.0"></script>
 </body>
 </html>
