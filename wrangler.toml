@@ -1,0 +1,18 @@
+name = "cs-marketing"
+main = "worker.js"
+compatibility_date = "2026-08-24"
+
+[vars]
+ADMIN_USERNAME = "admin"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cs-marketing"
+database_id = "1e17680e-1395-46d7-85c2-4a7f237fa589"
+
+[triggers]
+crons = ["15 4 * * *"]

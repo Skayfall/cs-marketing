@@ -1,0 +1,10 @@
+# Локальная авторизация. Скопируйте файл в .dev.vars.
+ADMIN_PASSWORD=csmarketing
+SESSION_SECRET=replace-with-a-long-random-secret-at-least-32-characters
+
+# Подключения к данным (добавляйте по мере настройки)
+# YANDEX_TOKEN=
+# METRIKA_COUNTER_ID=
+# WEBMASTER_HOST_ID=
+# DIRECT_TOKEN=
+# DIRECT_CLIENT_LOGIN=

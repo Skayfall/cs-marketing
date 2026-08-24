@@ -1,0 +1,15 @@
+{
+  "name": "cs-marketing-by-skayfall",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute cs-marketing --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute cs-marketing --remote --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.32.0"
+  }
+}
