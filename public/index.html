@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#0f172a" />
   <title>CS Marketing by skayfall</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-  <link rel="stylesheet" href="/styles.css?v=0.7.0" />
+  <link rel="stylesheet" href="/styles.css?v=1.0.0" />
 </head>
 <body>
   <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
     <div class="auth-card">
       <div class="auth-brand"><div class="auth-mark">CS</div><div><div class="auth-product">CS Marketing</div><div class="auth-byline">by skayfall</div></div></div>
-      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Аналитика сайта, SEO, рекламы, соцсетей и email доступна только авторизованным пользователям.</p></div>
+      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Сайт, SEO, реклама, VK и email собраны в одном рабочем кабинете.</p></div>
       <form class="auth-form" id="loginForm">
         <label>Логин<input class="input auth-input" id="loginInput" name="username" autocomplete="username" required /></label>
         <label>Пароль<input class="input auth-input" id="passwordInput" name="password" type="password" autocomplete="current-password" required /></label>
@@ -40,141 +40,138 @@
       <div class="sidebar-bottom">
         <div class="sync-pill"><span class="dot" id="syncDot"></span><span id="syncText">Проверяю источники…</span></div>
         <div class="account-row"><span class="account-avatar">A</span><div><strong id="accountName">admin</strong><span>доступ к кабинету</span></div></div>
-        <button class="ghost-btn full" id="clearLocalBtn">Очистить локальный кэш</button>
         <button class="ghost-btn full logout-btn" id="logoutBtn">Выйти</button>
       </div>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <div><button class="mobile-menu" id="mobileMenuBtn" aria-label="Открыть меню">☰</button><h1 id="pageTitle">Обзор сайта и обращений</h1><p id="pageSubtitle">Посещения, заявки, email-клики, источники трафика и быстрый доступ к Вебвизору.</p></div>
+        <div><button class="mobile-menu" id="mobileMenuBtn" aria-label="Открыть меню">☰</button><h1 id="pageTitle">Обзор</h1><p id="pageSubtitle">Состояние сайта, обращения и то, как люди вас находят.</p></div>
         <div class="top-actions">
           <select id="periodSelect" class="select"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select>
           <button class="secondary-btn" id="syncBtn">Обновить данные</button>
-          <button class="primary-btn" id="quickReportBtn">Скачать отчёт</button>
+          <button class="primary-btn" id="quickReportBtn">Отчёт руководителю</button>
         </div>
       </header>
-
       <div class="alert" id="globalAlert" hidden></div>
 
       <section id="overview" class="view active">
+        <article class="health-strip" id="healthStrip"></article>
         <div class="metric-grid" id="overviewMetrics"></div>
-        <div class="two-col">
-          <article class="panel chart-panel">
-            <div class="panel-head"><div><div class="eyebrow">Яндекс Метрика</div><h3>Посещения и обращения</h3></div><div class="legend-inline"><span><i class="legend-dot traffic"></i>Визиты</span><span><i class="legend-dot conversion"></i>Заявки</span></div></div>
-            <div class="chart-wrap"><canvas id="overviewChart"></canvas></div>
-          </article>
-          <article class="panel webvisor-card">
-            <div class="panel-head"><div><div class="eyebrow">Вебвизор</div><h3>Посмотреть реальные сессии</h3></div><span class="badge" id="webvisorStatus">Нет подключения</span></div>
-            <p class="muted">Видеозаписи сессий остаются в Яндекс Метрике. Здесь быстрый переход, чтобы не искать Вебвизор вручную.</p>
-            <button class="primary-btn" id="openWebvisorBtn" disabled>Открыть Вебвизор</button>
-            <div class="webvisor-hints" id="webvisorHints"></div>
-          </article>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Яндекс Метрика</div><h3>Посещения и обращения</h3></div><div class="legend-inline"><span><i class="legend-dot traffic"></i>Визиты</span><span><i class="legend-dot users"></i>Посетители</span><span><i class="legend-dot conversion"></i>Заявки</span></div></div><div class="chart-wrap"><canvas id="overviewChart"></canvas></div></article>
+          <article class="panel webvisor-card"><div class="panel-head"><div><div class="eyebrow">Вебвизор</div><h3>Разобрать реальные сессии</h3></div><span class="badge" id="webvisorStatus">Нет данных</span></div><p class="muted">Приложение показывает, какие типы сессий стоит открыть. Сами записи остаются в Метрике.</p><button class="primary-btn" id="openWebvisorBtn" disabled>Открыть Вебвизор</button><div class="webvisor-hints" id="webvisorHints"></div></article>
         </div>
         <div class="two-col">
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Как нас находят</div><h3>Источники трафика</h3></div></div><div class="chart-wrap small"><canvas id="sourceChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Поиск</div><h3>Из каких поисковиков приходят</h3></div></div><div id="searchEngineList" class="rank-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Как нас находят</div><h3>Источники трафика</h3></div></div><div class="chart-wrap small"><canvas id="sourceChart"></canvas></div><div id="sourceQualityList" class="mini-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Разметка каналов</div><h3>UTM: что реально приводит визиты</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Кампания</th><th>Визиты</th><th>Цели</th><th>CR</th></tr></thead><tbody id="overviewUtmTable"></tbody></table></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Фокус</div><h3>Что сейчас стоит проверить</h3></div><span class="badge danger" id="issuesCount">0 сигналов</span></div><div id="issueList" class="issue-list issue-grid"></div></article>
+        <div class="two-col wide-left">
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий приложения</div><h3>Что произошло за период</h3></div><span class="score-pill" id="marketingScore">—</span></div><div id="executiveComment" class="executive-comment"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Фокус</div><h3>Что проверить первым</h3></div><span class="badge danger" id="issuesCount">0</span></div><div id="issueList" class="issue-list"></div></article>
+        </div>
       </section>
 
       <section id="site" class="view">
         <div class="metric-grid" id="siteMetrics"></div>
-        <div class="two-col">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Яндекс Метрика</div><h3>Визиты, посетители и просмотры</h3></div></div><div class="chart-wrap"><canvas id="siteChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Устройства</div><h3>С чего заходят на сайт</h3></div></div><div class="chart-wrap small"><canvas id="deviceChart"></canvas></div></article>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика</div><h3>Визиты, посетители, просмотры</h3></div></div><div class="chart-wrap"><canvas id="siteChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Устройства</div><h3>С чего заходят</h3></div></div><div class="chart-wrap small"><canvas id="deviceChart"></canvas></div><div id="deviceNotes" class="mini-list"></div></article>
         </div>
         <div class="two-col">
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Источники</div><h3>Качество трафика</h3></div></div><div class="table-scroll"><table><thead><tr><th>Источник</th><th>Визиты</th><th>Пользователи</th><th>Отказы</th><th>Цели</th><th>CR</th></tr></thead><tbody id="sourcesTable"></tbody></table></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Источники</div><h3>Качество трафика</h3></div></div><div class="table-scroll"><table><thead><tr><th>Источник</th><th>Визиты</th><th>Пользователи</th><th>Отказы</th><th>Цели</th><th>CR</th><th>Оценка</th></tr></thead><tbody id="sourcesTable"></tbody></table></div></article>
           <article class="panel"><div class="panel-head"><div><div class="eyebrow">География</div><h3>Топ регионов</h3></div></div><div id="regionList" class="rank-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Цели</div><h3>Что люди делают на сайте</h3></div></div><div class="table-scroll"><table><thead><tr><th>Цель</th><th>Тип</th><th>Достижения</th><th>Целевые визиты</th><th>Конверсия</th></tr></thead><tbody id="goalsTable"></tbody></table></div></article>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Страницы входа</div><h3>Какие страницы приводят и удерживают трафик</h3></div><span class="muted">Сортировка по визитам</span></div><div class="table-scroll"><table><thead><tr><th>Страница</th><th>Визиты</th><th>Пользователи</th><th>Отказы</th><th>Глубина</th><th>Время</th><th>Цели</th><th>Сигнал</th></tr></thead><tbody id="pagesTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Цели</div><h3>Что люди делают на сайте</h3></div></div><div class="table-scroll"><table><thead><tr><th>Цель</th><th>Тип</th><th>Категория</th><th>Достижения</th><th>Конверсия</th><th>Комментарий</th></tr></thead><tbody id="goalsTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Страницы входа</div><h3>Где трафик превращается в интерес, а где теряется</h3></div></div><div class="table-scroll"><table><thead><tr><th>Страница</th><th>Визиты</th><th>Отказы</th><th>Глубина</th><th>Время</th><th>Цели</th><th>CR</th><th>Сигнал</th></tr></thead><tbody id="pagesTable"></tbody></table></div></article>
+        <div class="two-col">
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Поисковые фразы Метрики</div><h3>Что вводят перед переходом</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Фраза</th><th>Поисковик</th><th>Визиты</th><th>Отказы</th><th>Время</th></tr></thead><tbody id="searchPhrasesTable"></tbody></table></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">UTM</div><h3>Кампании и собственные каналы</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Source / medium</th><th>Campaign</th><th>Визиты</th><th>Отказы</th><th>Цели</th><th>CR</th></tr></thead><tbody id="utmTable"></tbody></table></div></article>
+        </div>
       </section>
 
       <section id="seo" class="view">
         <div class="metric-grid" id="seoMetrics"></div>
-        <div class="two-col">
+        <div class="two-col wide-left">
           <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Яндекс Вебмастер</div><h3>Страницы в поиске</h3></div></div><div class="chart-wrap"><canvas id="seoIndexChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Проблемы сайта</h3></div></div><div id="seoProblems" class="issue-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Техническое состояние</h3></div></div><div id="seoProblems" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">План изменений</div><h3>Что делать с сайтом по приоритету</h3></div></div><div id="seoPlan" class="plan-grid"></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">План изменений сайта</div><h3>Что делать и почему</h3></div><span class="muted">Формируется из запросов, индексации и поведения страниц</span></div><div id="seoPlan" class="plan-grid"></div></article>
         <div class="two-col">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Поисковый спрос</div><h3>Показы и клики по запросам</h3></div></div><div class="chart-wrap"><canvas id="seoChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Быстрый рост</div><h3>Запросы, которые можно дожать</h3></div></div><div id="seoOpportunities" class="issue-list"></div></article>
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Поисковый спрос</div><h3>Запросы с максимальным потенциалом</h3></div></div><div class="chart-wrap"><canvas id="seoChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Возможности</div><h3>Что можно дожать быстрее всего</h3></div></div><div id="seoOpportunities" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Поисковые запросы</div><h3>Позиции, CTR и потенциал</h3></div><div class="table-actions"><input id="seoSearch" class="input compact" placeholder="Найти запрос…" /></div></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Δ позиции</th><th>Потенциал</th></tr></thead><tbody id="seoTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Запросы</div><h3>Показы, клики, позиции и динамика</h3></div><input id="seoSearch" class="input compact" placeholder="Найти запрос…" /></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция показа</th><th>Позиция клика</th><th>Δ</th><th>Сигнал</th></tr></thead><tbody id="seoTable"></tbody></table></div></article>
       </section>
 
       <section id="ads" class="view">
         <div class="metric-grid" id="adsMetrics"></div>
         <div class="channel-tabs" id="adChannelTabs"></div>
-        <div class="two-col">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Расход и результат</div><h3>Динамика рекламы</h3></div></div><div class="chart-wrap"><canvas id="adsChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Где бюджет требует внимания</h3></div></div><div id="adsIssues" class="issue-list"></div></article>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Деньги и результат</div><h3>Расход, клики и конверсии</h3></div></div><div class="chart-wrap"><canvas id="adsChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Где реклама требует решения</h3></div></div><div id="adsIssues" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Кампании</div><h3>Яндекс Директ, VK Реклама и Дзен</h3></div><span class="muted">Остановленные кампании сохраняются в истории и помечаются статусом</span></div><div class="table-scroll"><table><thead><tr><th>Канал</th><th>Кампания</th><th>Статус</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Расход</th><th>CPC</th><th>Конверсии</th><th>CVR</th><th>CPA</th></tr></thead><tbody id="adsTable"></tbody></table></div></article>
+        <div class="two-col">
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Каналы</div><h3>Яндекс Директ vs VK Реклама</h3></div></div><div id="adChannelCompare" class="compare-grid"></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Поведение после клика</div><h3>Качество рекламного трафика</h3></div></div><div id="adBehavior" class="mini-list"></div></article>
+        </div>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Кампании</div><h3>Все активные и исторические кампании</h3></div><span class="muted">Остановленные кампании остаются в истории и не считаются активными.</span></div><div class="table-scroll"><table><thead><tr><th>Канал</th><th>Кампания</th><th>Статус</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Расход</th><th>CPC</th><th>Конверсии</th><th>CVR</th><th>CPA</th><th>Отказы</th><th>Глубина</th><th>Комментарий</th></tr></thead><tbody id="adsTable"></tbody></table></div></article>
       </section>
 
       <section id="social" class="view">
         <div class="metric-grid" id="socialMetrics"></div>
-        <div class="two-col">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Каналы</div><h3>Охват и просмотры</h3></div></div><div class="chart-wrap"><canvas id="socialChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Контент</div><h3>Что работает лучше</h3></div></div><div id="contentInsights" class="issue-list"></div></article>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">VK-сообщество</div><h3>Охват, просмотры и посетители</h3></div></div><div class="chart-wrap"><canvas id="socialDailyChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий приложения</div><h3>Что происходит с контентом</h3></div></div><div id="contentInsights" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Публикации</div><h3>VK, Telegram, MAX и Дзен</h3></div></div><div class="table-scroll"><table><thead><tr><th>Канал</th><th>Публикация</th><th>Дата</th><th>Охват</th><th>Просмотры</th><th>Реакции</th><th>Комментарии</th><th>Репосты</th><th>Клики</th><th>ER</th></tr></thead><tbody id="socialTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Лучшие публикации</div><h3>Что реально получает реакцию</h3></div></div><div id="topPostCards" class="top-post-grid"></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Публикации</div><h3>Детальная статистика VK</h3></div></div><div class="table-scroll"><table><thead><tr><th>Публикация</th><th>Дата</th><th>Просмотры</th><th>Реакции</th><th>Комментарии</th><th>Репосты</th><th>ER по просмотрам</th><th>Оценка</th></tr></thead><tbody id="socialTable"></tbody></table></div></article>
       </section>
 
       <section id="email" class="view">
         <div class="metric-grid" id="emailMetrics"></div>
-        <div class="two-col">
-          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">UniSender</div><h3>Открытия и клики</h3></div></div><div class="chart-wrap"><canvas id="emailChart"></canvas></div></article>
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Качество рассылок</h3></div></div><div id="emailIssues" class="issue-list"></div></article>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">UniSender</div><h3>Доставляемость, открытия и клики</h3></div></div><div class="chart-wrap"><canvas id="emailChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Диагностика</div><h3>Что улучшить в рассылках</h3></div></div><div id="emailIssues" class="issue-list"></div></article>
         </div>
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Рассылки</div><h3>Статистика кампаний UniSender</h3></div></div><div class="table-scroll"><table><thead><tr><th>Рассылка</th><th>Дата</th><th>Отправлено</th><th>Доставлено</th><th>Open Rate</th><th>CTR</th><th>Ошибки</th><th>Отписки</th><th>Спам</th><th>Оценка</th></tr></thead><tbody id="emailTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Рассылки</div><h3>Сравнение кампаний</h3></div></div><div class="table-scroll"><table><thead><tr><th>Рассылка</th><th>Дата</th><th>Отправлено</th><th>Доставлено</th><th>Delivery</th><th>Open Rate</th><th>CTR</th><th>CTOR</th><th>Отписки</th><th>Спам</th><th>Оценка</th></tr></thead><tbody id="emailTable"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Клики внутри писем</div><h3>Какие ссылки интересуют аудиторию</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Ссылка</th><th>Рассылка</th><th>Клики</th></tr></thead><tbody id="emailLinksTable"></tbody></table></div></article>
       </section>
 
       <section id="tasks" class="view">
         <div class="task-layout">
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">План работы</div><h3>Задачи по найденным проблемам</h3></div><button class="primary-btn" id="addTaskBtn">Добавить задачу</button></div><div id="taskList" class="task-list"></div></article>
-          <article class="panel task-summary"><div class="eyebrow">Фокус</div><h3>Сначала то, что влияет на заявки, деньги и поиск</h3><ol id="focusSteps"></ol></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Автоплан</div><h3>Задачи из текущей аналитики</h3></div><button class="primary-btn" id="addTaskBtn">Добавить свою</button></div><div id="taskList" class="task-list"></div></article>
+          <article class="panel task-summary"><div class="eyebrow">Фокус недели</div><h3>Что даст наибольший эффект</h3><ol id="focusSteps"></ol><div class="muted small-text">Автозадачи пересчитываются после синхронизации. Выполненные отметки хранятся только в этом браузере.</div></article>
         </div>
       </section>
 
       <section id="reports" class="view">
         <div class="report-builder">
-          <article class="panel">
-            <div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Отчёт руководителю</h3></div></div>
-            <div class="form-grid"><label>Название отчёта<input class="input" id="reportName" value="Маркетинговый отчёт" /></label><label>Период<select class="select" id="reportPeriod"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></label></div>
-            <div class="check-grid"><label><input type="checkbox" checked value="overview" class="reportCheck" /> Общая сводка</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> Соцсети</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="recommendations" class="reportCheck" /> Рекомендации</label></div>
-            <div class="button-row"><button class="primary-btn" id="generateReportBtn">Скачать PDF</button><button class="secondary-btn" id="downloadJsonBtn">Выгрузить JSON</button><button class="secondary-btn" id="downloadCsvBtn">Выгрузить CSV</button></div>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Понятный отчёт руководителю</h3></div></div>
+            <div class="form-grid"><label>Название<input class="input" id="reportName" value="Маркетинговый отчёт ПТГ «Центр Сантехники»" /></label><label>Период<select class="select" id="reportPeriod"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></label></div>
+            <div class="check-grid"><label><input type="checkbox" checked value="summary" class="reportCheck" /> Резюме</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> VK</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="plan" class="reportCheck" /> План действий</label></div>
+            <div class="button-row"><button class="primary-btn" id="generateReportBtn">Скачать PDF</button><button class="secondary-btn" id="downloadCommentBtn">Скачать комментарий .txt</button><button class="secondary-btn" id="downloadCsvBtn">CSV</button><button class="secondary-btn" id="downloadJsonBtn">JSON</button></div>
           </article>
-          <article class="panel"><div class="eyebrow">Что попадёт в отчёт</div><div id="reportPreview" class="report-preview"></div></article>
+          <article class="panel"><div class="eyebrow">Предпросмотр</div><div id="reportPreview" class="report-preview rich-preview"></div></article>
         </div>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий для руководителя</div><h3>Готовый текст по цифрам</h3></div></div><div id="managerComment" class="manager-comment"></div></article>
       </section>
 
       <section id="integrations" class="view">
-        <div class="integration-header panel"><div><div class="eyebrow">Источники данных</div><h3>Подключения</h3><p class="muted">Здесь видно, какие доступы уже настроены и каких параметров не хватает. Секретные значения приложение никогда не показывает обратно.</p></div><div class="button-row"><button class="primary-btn" id="syncAllBtn">Синхронизировать API</button><button class="secondary-btn" id="importBtn">Импорт Excel / CSV</button></div><input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json" hidden /></div>
+        <article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Конфигурация рассчитана именно на текущий набор Cloudflare Runtime: Яндекс, VK Реклама, VK-сообщество и UniSender.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
         <div class="integration-grid" id="integrationGrid"></div>
-
-        <article class="panel credential-panel"><div class="panel-head"><div><div class="eyebrow">Cloudflare Runtime</div><h3>Какие переменные нужны</h3></div></div><p class="muted">Cloudflare → Worker → Settings → Variables and Secrets → Runtime variables and secrets. Пароли, токены и secret-ключи добавляй как <strong>Secret</strong>; ID сайта и служебные параметры — как обычный <strong>Variable</strong>.</p><div class="table-scroll"><table class="data-table credential-table"><thead><tr><th>Имя</th><th>Тип</th><th>Что указать</th><th>Зачем</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
-
-        <div class="two-col integration-notes">
-          <article class="panel"><div class="eyebrow">Яндекс</div><h3>Один токен для Метрики + Вебмастера</h3><p class="muted">Создай приложение Яндекс OAuth с правами <code>metrika:read</code> и <code>webmaster:hostinfo</code>, получи OAuth-токен и сохрани его как <code>YANDEX_TOKEN</code>. Добавь <code>SITE_URL=https://www.cs-trade.ru/</code> — приложение попробует само найти нужный счётчик и сайт. ID нужны только как запасной ручной вариант.</p><p class="muted">Для Директа нужен отдельный <code>DIRECT_TOKEN</code> и одобренная заявка приложения на доступ к Direct API.</p></article>
-          <article class="panel"><div class="eyebrow">VK Реклама + UniSender</div><h3>Отдельные ключи</h3><p class="muted"><strong>VK Реклама:</strong> добавь <code>VK_ADS_CLIENT_ID</code> как Variable и <code>VK_ADS_CLIENT_SECRET</code> как Secret. Worker получает временный access token сам при синхронизации.</p><p class="muted"><strong>UniSender:</strong> включи API-доступ в кабинете и добавь ключ как <code>UNISENDER_API_KEY</code> Secret.</p><p class="muted"><strong>MAX:</strong> создай/используй бота, добавь его администратором канала и укажи <code>MAX_BOT_TOKEN</code> + <code>MAX_CHANNEL_ID</code>.</p></article>
-        </div>
-
-        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Пока без прямого API</div><h3>Telegram, Дзен и органический VK</h3></div></div><p class="muted">Для Telegram полная статистика канала идёт через MTProto и авторизацию пользователя-администратора — одного bot token недостаточно. Для Дзена я пока не использую неподтверждённый публичный API, поэтому там остаётся импорт. Органический VK пока импортируется отдельно от VK Рекламы. MAX уже подключается через официальный Bot API.</p><div class="form-grid compact-grid"><label>Источник<select class="select" id="importSource"><option value="site">Сайт / Метрика</option><option value="seo">SEO / Вебмастер</option><option value="ads">Реклама</option><option value="social">Соцсети</option><option value="email">Email</option></select></label><label>Режим<select class="select" id="importMode"><option value="append">Добавить / обновить</option><option value="replace">Заменить данные раздела</option></select></label></div><div id="importLog" class="import-log">Импортов в этой сессии пока нет.</div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Runtime variables & secrets</div><h3>Проверка конфигурации</h3></div></div><div id="runtimeSummary" class="runtime-summary"></div><div class="table-scroll"><table><thead><tr><th>Параметр</th><th>Тип</th><th>Статус</th><th>Используется для</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Журнал</div><h3>Последние синхронизации</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Когда</th><th>Статус</th><th>Комментарий</th></tr></thead><tbody id="syncLogTable"></tbody></table></div></article>
       </section>
     </main>
   </div>
 
-  <dialog id="taskDialog"><form method="dialog" id="taskForm" class="dialog-form"><div class="panel-head"><h3>Новая задача</h3><button value="cancel" class="icon-btn" aria-label="Закрыть">×</button></div><label>Задача<input class="input" id="taskTitleInput" required maxlength="180" /></label><label>Приоритет<select class="select" id="taskPriorityInput"><option value="high">Высокий</option><option value="medium" selected>Средний</option><option value="low">Низкий</option></select></label><div class="button-row"><button value="cancel" class="secondary-btn">Отмена</button><button value="default" class="primary-btn" id="saveTaskBtn">Добавить</button></div></form></dialog>
+  <dialog id="taskDialog"><form method="dialog" id="taskForm" class="dialog-form"><div class="panel-head"><h3>Новая задача</h3><button value="cancel" class="icon-btn" aria-label="Закрыть">×</button></div><label>Задача<input class="input" id="taskTitleInput" required maxlength="180" /></label><label>Приоритет<select class="select" id="taskPriorityInput"><option value="high">Высокий</option><option value="medium" selected>Средний</option><option value="low">Низкий</option></select></label><div class="button-row"><button value="cancel" class="secondary-btn">Отмена</button><button value="default" class="primary-btn">Добавить</button></div></form></dialog>
   <div id="reportCanvas" class="report-canvas"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
-  <script src="/app.js?v=0.7.0"></script>
+  <script src="/app.js?v=1.0.0"></script>
 </body>
 </html>
