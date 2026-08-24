@@ -1,8 +1,14 @@
-// CS Marketing by skayfall v1.2 — VK split: ads API isolated from community analytics
+// CS Marketing by skayfall v1.3 — public social monitoring: VK + Telegram + MAX + Dzen
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 const AUTH_HEADER_PREFIX = 'Bearer ';
+const DEFAULT_SOCIAL_URLS = {
+  vk: 'https://vk.ru/centr_santechniki',
+  telegram: 'https://t.me/CS_trade_official',
+  max: 'https://max.ru/id7724208038_biz',
+  dzen: 'https://dzen.ru/centr_santehniki'
+};
 
 export default {
   async fetch(request, env, ctx) {
@@ -31,8 +37,9 @@ async function handleApi(request, env, ctx, url) {
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
+  if (request.method === 'POST' && url.pathname === '/api/sync/all') return json(await syncConfigured(env), 200);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
-  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|unisender)$/);
+  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
   if (request.method === 'POST' && m) {
     try {
       const result = await syncSource(m[1], env);
@@ -221,10 +228,10 @@ async function status(env) {
   const webmasterTarget = Boolean(env.WEBMASTER_HOST_ID || env.SITE_URL);
   const vkAdsReady = Boolean(env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET));
   const vkAdsPartial = Boolean(env.VK_ADS_CLIENT_SECRET && !env.VK_ADS_CLIENT_ID && !env.VK_ADS_TOKEN);
-  const vkSocialReady = Boolean(env.VK_COMMUNITY_TOKEN || env.VK_COMMUNITY_URL || env.VK_GROUP_ID);
-  const telegramReady = Boolean(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME);
-  const maxReady = Boolean(env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID);
-  const maxPartial = Boolean((env.MAX_BOT_TOKEN || env.MAX_CHANNEL_ID) && !maxReady);
+  const vkSocialReady = true; // публичный URL задан по умолчанию; API-токены лишь расширяют статистику
+  const telegramReady = true;
+  const maxReady = true;
+  const dzenReady = true;
 
   const integrations = {
     metrika: item('metrika', yandexBase && metrikaTarget,
@@ -240,15 +247,14 @@ async function status(env) {
         !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_SECRET && 'VK_ADS_CLIENT_SECRET'
       ].filter(Boolean), 'api',
       { partial: vkAdsPartial, note: vkAdsPartial ? 'VK_ADS_CLIENT_SECRET уже есть; нужен только VK_ADS_CLIENT_ID как обычная Variable.' : null }),
-    vksocial: item('vksocial', vkSocialReady,
-      [!vkSocialReady && 'VK_COMMUNITY_TOKEN или VK_COMMUNITY_URL/VK_GROUP_ID'].filter(Boolean), 'hybrid',
-      { note: vkSocialReady ? 'VK Реклама от этой интеграции не зависит. Токен сообщества используется только для статистики/идентификации. Посты читаются через service/user token, если он есть, иначе приложение пробует публичную страницу сообщества и не валит синхронизацию при ограничениях VK.' : null }),
-    telegram: item('telegram', telegramReady,
-      [!telegramReady && 'TELEGRAM_CHANNEL_URL'].filter(Boolean), 'public-web',
-      { note: telegramReady ? 'Для публичного канала загружаются посты и просмотры из web-preview Telegram. Реакции и комментарии могут быть недоступны публично.' : 'Достаточно публичной ссылки канала, например https://t.me/имя_канала.' }),
-    maxsocial: item('maxsocial', maxReady,
-      [!env.MAX_BOT_TOKEN && 'MAX_BOT_TOKEN', !env.MAX_CHANNEL_ID && 'MAX_CHANNEL_ID'].filter(Boolean), 'api',
-      { partial: maxPartial, note: maxReady ? 'Бот должен быть администратором канала; MAX API отдаёт посты и их статистику просмотров/репостов.' : 'Для исторических постов MAX нужен Bot API: токен бота + ID канала.' }),
+    vksocial: item('vksocial', vkSocialReady, [], env.VK_COMMUNITY_TOKEN ? 'hybrid' : 'public-web',
+      { note: `Посты проверяются по публичной странице ${env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk}. Если токен сообщества доступен, приложение дополнительно пробует получить агрегированную статистику.` }),
+    telegram: item('telegram', telegramReady, [], 'public-web',
+      { note: `Посты и просмотры проверяются по публичной web-ленте ${env.TELEGRAM_CHANNEL_URL || DEFAULT_SOCIAL_URLS.telegram}.` }),
+    maxsocial: item('maxsocial', maxReady, [], env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID ? 'hybrid' : 'public-web',
+      { note: `Посты проверяются по публичной странице ${env.MAX_CHANNEL_URL || DEFAULT_SOCIAL_URLS.max}. Bot API используется как расширенный источник, если настроен.` }),
+    dzen: item('dzen', dzenReady, [], 'public-web',
+      { note: `Публикации проверяются по публичной странице ${env.DZEN_CHANNEL_URL || DEFAULT_SOCIAL_URLS.dzen}. Сохраняются только метрики, которые Дзен реально отдаёт в публичной странице.` }),
     unisender: item('unisender', Boolean(env.UNISENDER_API_KEY),
       [!env.UNISENDER_API_KEY && 'UNISENDER_API_KEY'].filter(Boolean))
   };
@@ -273,7 +279,9 @@ async function status(env) {
     MAX_BOT_TOKEN: Boolean(env.MAX_BOT_TOKEN),
     MAX_CHANNEL_ID: Boolean(env.MAX_CHANNEL_ID),
     METRIKA_COUNTER_ID: Boolean(env.METRIKA_COUNTER_ID),
-    WEBMASTER_HOST_ID: Boolean(env.WEBMASTER_HOST_ID)
+    WEBMASTER_HOST_ID: Boolean(env.WEBMASTER_HOST_ID),
+    MAX_CHANNEL_URL: Boolean(env.MAX_CHANNEL_URL),
+    DZEN_CHANNEL_URL: Boolean(env.DZEN_CHANNEL_URL)
   };
 
   return json({
@@ -330,15 +338,21 @@ async function dashboard(env) {
 async function syncConfigured(env) {
   await ensureExtendedSchema(env);
   const jobs = [];
-  if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) jobs.push(syncMetrika(env));
-  if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) jobs.push(syncWebmaster(env));
-  if (env.YANDEX_TOKEN) jobs.push(syncDirect(env));
-  if (env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) jobs.push(syncVkAds(env));
-  if (env.VK_COMMUNITY_TOKEN) jobs.push(syncVkCommunity(env));
-  if (env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME) jobs.push(syncTelegram(env));
-  if (env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID) jobs.push(syncMax(env));
-  if (env.UNISENDER_API_KEY) jobs.push(syncUnisender(env));
-  await Promise.allSettled(jobs);
+  const add = (source, fn) => jobs.push([source, fn]);
+  if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) add('metrika', () => syncMetrika(env));
+  if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) add('webmaster', () => syncWebmaster(env));
+  if (env.YANDEX_TOKEN) add('direct', () => syncDirect(env));
+  if (env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) add('vkads', () => syncVkAds(env));
+  add('vksocial', () => syncVkCommunity(env));
+  add('telegram', () => syncTelegram(env));
+  add('maxsocial', () => syncMax(env));
+  add('dzen', () => syncDzen(env));
+  if (env.UNISENDER_API_KEY) add('unisender', () => syncUnisender(env));
+  const settled = await Promise.allSettled(jobs.map(([, fn]) => fn()));
+  const results = settled.map((r, i) => ({ source: jobs[i][0], ok: r.status === 'fulfilled', message: r.status === 'fulfilled' ? (r.value?.message || 'Обновлено') : (r.reason?.message || String(r.reason || 'Ошибка')) }));
+  const ok = results.filter(x => x.ok).length;
+  const failed = results.length - ok;
+  return { message: `Синхронизация завершена: ${ok} источников обновлено${failed ? `, ${failed} с ошибкой/ограничением` : ''}.`, results };
 }
 
 async function syncSource(source, env) {
@@ -350,6 +364,7 @@ async function syncSource(source, env) {
   if (source === 'vksocial') return syncVkCommunity(env);
   if (source === 'telegram') return syncTelegram(env);
   if (source === 'maxsocial') return syncMax(env);
+  if (source === 'dzen') return syncDzen(env);
   if (source === 'unisender') return syncUnisender(env);
   throw new Error('Unknown source');
 }
@@ -899,7 +914,7 @@ function normalizeVkApiPosts(wall, groupId, followers = 0) {
 
 async function resolveVkCommunityHybrid(env, token) {
   const explicitId = String(env.VK_GROUP_ID || '').replace(/^-/,'').trim();
-  const explicitUrl = String(env.VK_COMMUNITY_URL || '').trim();
+  const explicitUrl = String(env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk).trim();
   const screenFromUrl = vkScreenNameFromUrl(explicitUrl);
 
   if (token) {
@@ -931,11 +946,11 @@ function vkScreenNameFromUrl(value) {
 }
 
 async function fetchVkPublicPosts(env, group) {
-  const screen = vkScreenNameFromUrl(env.VK_COMMUNITY_URL || '') || String(group?.screen_name || '').trim();
+  const screen = vkScreenNameFromUrl(env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk) || String(group?.screen_name || '').trim();
   const groupId = String(group?.id || env.VK_GROUP_ID || '').replace(/^-/,'');
   const target = screen ? `https://m.vk.com/${encodeURIComponent(screen)}` : groupId ? `https://m.vk.com/club${encodeURIComponent(groupId)}` : '';
   if (!target) return [];
-  const res = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CSMarketing/1.2)', 'Accept-Language': 'ru,en;q=0.8' }, redirect: 'follow' });
+  const res = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CSMarketing/1.3)', 'Accept-Language': 'ru,en;q=0.8' }, redirect: 'follow' });
   const html = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   if (/captcha|security check|login_form|blocked/i.test(html) && !/wall-?\d+_\d+/i.test(html)) throw new Error('VK запросил авторизацию/проверку вместо публичной стены');
@@ -1007,8 +1022,7 @@ async function vkApi(method, params, token) {
 /* -------------------- TELEGRAM PUBLIC CHANNEL -------------------- */
 
 async function syncTelegram(env) {
-  const source = String(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME || '').trim();
-  if (!source) throw new Error('Добавьте TELEGRAM_CHANNEL_URL, например https://t.me/имя_канала.');
+  const source = String(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME || DEFAULT_SOCIAL_URLS.telegram).trim();
   const info = telegramChannelInfo(source);
   const posts = new Map();
   let before = null;
@@ -1030,6 +1044,11 @@ async function syncTelegram(env) {
     if (batch.length < 10) break;
   }
 
+  if (!posts.size) {
+    const message = 'Telegram: публичная страница не отдала распознаваемые посты. Последняя успешная история сохранена без изменений.';
+    await logSync(env,'telegram','partial',message);
+    return { message };
+  }
   await env.DB.prepare(`DELETE FROM social_posts WHERE channel='Telegram'`).run();
   await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='Telegram'`).run();
   const daily = new Map();
@@ -1092,15 +1111,25 @@ function parseTelegramHtml(html, username, followers = 0) {
 /* -------------------- MAX CHANNEL -------------------- */
 
 async function syncMax(env) {
-  if (!env.MAX_BOT_TOKEN || !env.MAX_CHANNEL_ID) throw new Error('Для MAX добавьте MAX_BOT_TOKEN (Secret) и MAX_CHANNEL_ID (Text). Бот должен быть администратором канала.');
+  // If Bot API is configured, prefer it. Otherwise use the public business-channel page.
+  if (env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID) {
+    try { return await syncMaxApi(env); }
+    catch (err) {
+      const fallback = await syncMaxPublic(env).catch(() => null);
+      if (fallback) return fallback;
+      throw err;
+    }
+  }
+  return syncMaxPublic(env);
+}
+
+async function syncMaxApi(env) {
   const url = withParams('https://platform-api2.max.ru/messages', { chat_id: String(env.MAX_CHANNEL_ID), count: 100 });
   const res = await fetch(url, { headers: { Authorization: String(env.MAX_BOT_TOKEN), Accept: 'application/json' } });
   const text = await res.text(); let data = {}; try { data=JSON.parse(text); } catch {}
   if (!res.ok) throw new Error(`MAX API ${res.status}: ${data?.message || data?.error || text.slice(0,350)}`);
   const messages = Array.isArray(data?.messages) ? data.messages : Array.isArray(data) ? data : [];
-  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='MAX'`).run();
-  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='MAX'`).run();
-  const daily=new Map();
+  const posts = [];
   for (const m of messages) {
     const stamp=num(m?.timestamp); if(!stamp) continue;
     const date=dateOnly(new Date(stamp));
@@ -1111,20 +1140,135 @@ async function syncMax(env) {
     const shares=num(stat.reposts ?? stat.repost_count ?? stat.reposts_count ?? stat.shares);
     const attachments=Array.isArray(m?.body?.attachments)?m.body.attachments:[];
     const mediaType=attachments.some(a=>String(a?.type).toLowerCase().includes('video'))?'video':attachments.some(a=>['image','photo'].includes(String(a?.type).toLowerCase()))?'image':attachments.length?'attachment':'text';
-    const title=textBody ? textBody.slice(0,180) : `Пост MAX ${mid}`;
-    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
-      VALUES('MAX',?,?,?,?,?,?,?,?,0,0,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(channel,title,date) DO UPDATE SET views=excluded.views,shares=excluded.shares,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
-      .bind(title,date,0,views,0,0,shares,0,mid,String(m?.url||''),mediaType,textBody.length).run();
-    const d=daily.get(date)||{views:0,shares:0};d.views+=views;d.shares+=shares;daily.set(date,d);
+    posts.push({ title:textBody ? textBody.slice(0,180) : `Пост MAX ${mid}`, date, reach:0, views, reactions:0, comments:0, shares, clicks:0, followers:0, followersDelta:0, postId:mid, postUrl:String(m?.url||''), mediaType, textLength:textBody.length });
   }
-  for (const [date,d] of daily) await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
-    VALUES('MAX',?, ?,0,0,0,0,0,0,0,?) ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,shares=excluded.shares`).bind(date,d.views,d.shares).run();
+  await replaceSocialPosts(env,'MAX',posts);
   await saveResolved(env,'maxsocial',String(env.MAX_CHANNEL_ID),'MAX channel');
-  const message=`MAX: загружено ${messages.length} последних постов. API канала отдаёт просмотры и репосты; другие реакции учитываются только если доступны в ответе API.`;
-  await logSync(env,'maxsocial',messages.length?'ok':'partial',message);
+  const message=`MAX: загружено ${posts.length} постов через Bot API. Просмотры и репосты обновляются автоматически.`;
+  await logSync(env,'maxsocial',posts.length?'ok':'partial',message);
   return { message };
 }
+
+async function syncMaxPublic(env) {
+  const url = String(env.MAX_CHANNEL_URL || DEFAULT_SOCIAL_URLS.max).trim();
+  const { html, finalUrl } = await fetchPublicHtml(url, 'MAX');
+  const posts = parseStructuredPublicPosts(html, { channel:'MAX', baseUrl:finalUrl || url, hostPattern:/max\.ru/i, maxPosts:100 });
+  await replaceSocialPosts(env,'MAX',posts);
+  const message = posts.length
+    ? `MAX: публичная проверка загрузила ${posts.length} публикаций. Метрики берутся только из значений, реально присутствующих на публичной странице.`
+    : 'MAX: публичная страница открылась, но не отдала распознаваемую ленту постов. Другие соцсети продолжают синхронизироваться.';
+  await logSync(env,'maxsocial',posts.length?'ok':'partial',message);
+  return { message };
+}
+
+/* -------------------- DZEN PUBLIC CHANNEL -------------------- */
+
+async function syncDzen(env) {
+  const url = String(env.DZEN_CHANNEL_URL || DEFAULT_SOCIAL_URLS.dzen).trim();
+  const { html, finalUrl } = await fetchPublicHtml(url, 'Дзен');
+  const posts = parseStructuredPublicPosts(html, { channel:'Дзен', baseUrl:finalUrl || url, hostPattern:/dzen\.ru/i, maxPosts:120 });
+  await replaceSocialPosts(env,'Дзен',posts);
+  const message = posts.length
+    ? `Дзен: публичная проверка загрузила ${posts.length} публикаций. Просмотры/реакции сохраняются только когда они присутствуют в публичных данных.`
+    : 'Дзен: страница канала доступна, но публичная разметка не отдала распознаваемые публикации или счётчики. Данные не подменяются нулями.';
+  await logSync(env,'dzen',posts.length?'ok':'partial',message);
+  return { message };
+}
+
+async function fetchPublicHtml(url, label) {
+  const res = await fetch(url, { headers: { 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36', 'Accept-Language':'ru-RU,ru;q=0.9,en;q=0.6', Accept:'text/html,application/xhtml+xml' }, redirect:'follow' });
+  const html = await res.text();
+  if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
+  if (!html || html.length < 300) throw new Error(`${label}: публичная страница вернула пустой ответ`);
+  return { html, finalUrl: res.url };
+}
+
+async function replaceSocialPosts(env, channel, posts) {
+  if (!Array.isArray(posts) || !posts.length) return; // временный блок/изменение HTML не стирает последнюю успешную историю
+  await env.DB.prepare(`DELETE FROM social_posts WHERE channel=?`).bind(channel).run();
+  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel=?`).bind(channel).run();
+  const daily = new Map();
+  for (const post of posts.slice(0,150)) {
+    if (!post?.date || !post?.title) continue;
+    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
+      .bind(channel,post.title,post.date,num(post.reach),num(post.views),num(post.reactions),num(post.comments),num(post.shares),num(post.clicks),num(post.followers),num(post.followersDelta),String(post.postId||''),String(post.postUrl||''),String(post.mediaType||'text'),num(post.textLength)).run();
+    const d=daily.get(post.date)||{views:0,likes:0,comments:0,shares:0,reach:0};
+    d.views+=num(post.views);d.likes+=num(post.reactions);d.comments+=num(post.comments);d.shares+=num(post.shares);d.reach+=num(post.reach);daily.set(post.date,d);
+  }
+  for (const [date,d] of daily) await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
+    VALUES(?,?,?,0,?,0,0,0,?,?,?) ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,reach=excluded.reach,likes=excluded.likes,comments=excluded.comments,shares=excluded.shares`)
+    .bind(channel,date,d.views,d.reach,d.likes,d.comments,d.shares).run();
+}
+
+function parseStructuredPublicPosts(html, options={}) {
+  const channel=options.channel||'Соцсеть', maxPosts=options.maxPosts||100, baseUrl=options.baseUrl||'';
+  const objects=[];
+  // JSON script blocks / hydration state are the most reliable public source on modern social pages.
+  for (const m of String(html).matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)) {
+    let raw=String(m[1]||'').trim();
+    if (!raw || raw.length<2 || raw.length>8_000_000) continue;
+    raw=decodeHtml(raw);
+    const candidates=[];
+    if ((raw.startsWith('{')&&raw.endsWith('}'))||(raw.startsWith('[')&&raw.endsWith(']'))) candidates.push(raw);
+    const assign=raw.match(/(?:__INITIAL_STATE__|__NEXT_DATA__|__PRELOADED_STATE__|initialState)\s*=\s*({[\s\S]+})\s*;?$/i);
+    if (assign) candidates.push(assign[1]);
+    for (const c of candidates) { try { objects.push(JSON.parse(c)); } catch {} }
+  }
+  const found=[];
+  const seen=new Set();
+  const visit=(node,depth=0)=>{
+    if(depth>18||found.length>maxPosts*5||node==null)return;
+    if(Array.isArray(node)){for(const x of node)visit(x,depth+1);return;}
+    if(typeof node!=='object')return;
+    const p=structuredObjectToPost(node,channel,baseUrl);
+    if(p){const key=p.postId||p.postUrl||`${p.date}|${p.title}`;if(!seen.has(key)){seen.add(key);found.push(p);}}
+    for(const v of Object.values(node)) if(v&&typeof v==='object')visit(v,depth+1);
+  };
+  objects.forEach(o=>visit(o));
+  if (!found.length) found.push(...parsePublicHtmlFallback(html,channel,baseUrl));
+  return found.filter(x=>x.date&&x.title).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,maxPosts);
+}
+
+function structuredObjectToPost(o, channel, baseUrl) {
+  const text=cleanPublicText(firstNonEmpty(o.text,o.title,o.name,o.description,o.caption,o.message?.text,o.body?.text,o.content?.text,o.publication?.title,o.publication?.text));
+  const rawUrl=firstNonEmpty(o.url,o.link,o.href,o.permalink,o.webUrl,o.publicationUrl,o.shareUrl,o.canonicalUrl,o.postUrl);
+  const id=firstNonEmpty(o.id,o.postId,o.publicationId,o.message_id,o.mid,o.uuid,o.slug);
+  const rawDate=firstNonEmpty(o.publishTime,o.publicationTime,o.publishedAt,o.published_at,o.createdAt,o.created_at,o.createTime,o.date,o.timestamp,o.time);
+  const date=normalizePublicDate(rawDate);
+  const views=metricFromObject(o,['views','viewCount','viewsCount','view_count','impressions','stat.views','statistics.views','counters.views']);
+  const reactions=metricFromObject(o,['likes','likesCount','likeCount','reactions','reactionsCount','stat.likes','counters.likes']);
+  const comments=metricFromObject(o,['comments','commentsCount','commentCount','stat.comments','counters.comments']);
+  const shares=metricFromObject(o,['shares','shareCount','reposts','repostsCount','stat.reposts','counters.reposts']);
+  const hasSignal=Boolean(text && (date || rawUrl || id) && (views||reactions||comments||shares||rawUrl));
+  if(!hasSignal)return null;
+  const postUrl=absolutizePublicUrl(String(rawUrl||''),baseUrl);
+  const mediaType=/video/i.test(JSON.stringify(o).slice(0,5000))?'video':/image|photo|cover/i.test(JSON.stringify(o).slice(0,5000))?'image':'text';
+  return {title:(text||`${channel} ${id}`).slice(0,180),date,reach:0,views,reactions,comments,shares,clicks:0,followers:0,followersDelta:0,postId:String(id||postUrl||''),postUrl,mediaType,textLength:text.length};
+}
+
+function parsePublicHtmlFallback(html,channel,baseUrl){
+  const out=[], text=decodeHtml(String(html||''));
+  const timeHits=[...text.matchAll(/<time[^>]+datetime=["']([^"']+)["'][^>]*>/gi)];
+  for(let i=0;i<timeHits.length&&out.length<100;i++){
+    const h=timeHits[i],from=Math.max(0,h.index-5000),to=Math.min(text.length,h.index+18000),chunk=text.slice(from,to);
+    const date=normalizePublicDate(h[1]); if(!date)continue;
+    const title=cleanPublicText(firstMatch(chunk,/(?:aria-label|title)=["']([^"']{20,500})["']/i)||stripHtml(firstMatch(chunk,/<(?:h2|h3|article|p)[^>]*>([\s\S]{20,1200}?)<\/(?:h2|h3|article|p)>/i))).slice(0,180);
+    if(!title)continue;
+    const href=firstMatch(chunk,/href=["']([^"']+)["']/i);
+    const views=parseCompactNumber(firstMatch(chunk,/(?:views?|просмотр(?:а|ов)?)[^\d]{0,30}([\d\s.,]+\s*[KMBКМ]?)/i)||firstMatch(chunk,/([\d\s.,]+\s*[KMBКМ]?)\s*(?:views?|просмотр(?:а|ов)?)/i));
+    const reactions=parseCompactNumber(firstMatch(chunk,/(?:likes?|реакци[^\d]*)[^\d]{0,20}([\d\s.,]+\s*[KMBКМ]?)/i));
+    out.push({title,date,reach:0,views,reactions,comments:0,shares:0,clicks:0,followers:0,followersDelta:0,postId:href||`${date}-${i}`,postUrl:absolutizePublicUrl(href,baseUrl),mediaType:/video/i.test(chunk)?'video':/img|photo|image/i.test(chunk)?'image':'text',textLength:title.length});
+  }
+  return out;
+}
+
+function firstNonEmpty(...xs){for(const x of xs){if(x!==undefined&&x!==null&&String(x).trim()!=='')return x;}return '';}
+function cleanPublicText(v){return stripHtml(typeof v==='string'?v:typeof v==='object'?firstNonEmpty(v?.text,v?.title,v?.value):String(v||'')).replace(/\s+/g,' ').trim();}
+function normalizePublicDate(v){if(v===undefined||v===null||v==='')return '';let d;if(typeof v==='number'||/^\d{10,13}$/.test(String(v))){let n=Number(v);if(n<1e12)n*=1000;d=new Date(n);}else d=new Date(String(v));return Number.isNaN(d.getTime())?'':dateOnly(d);}
+function metricFromObject(o,paths){for(const p of paths){let v=o;for(const key of p.split('.'))v=v?.[key];if(typeof v==='object'&&v!==null)v=v.count??v.value??v.total;if(v!==undefined&&v!==null&&v!==''){const n=parseCompactNumber(v);if(n)return n;}}return 0;}
+function absolutizePublicUrl(raw,base){if(!raw)return '';try{return new URL(raw,base||undefined).toString();}catch{return String(raw);}}
 
 function firstMatch(text,re){const m=String(text||'').match(re);return m?m[1]||'':'';}
 function parseCompactNumber(value){const s=stripHtml(String(value||'')).trim().replace(/\s/g,'').replace(',','.');const m=s.match(/([\d.]+)([KMBКММЛН]*)/i);if(!m)return num(s);let n=Number(m[1]||0),u=String(m[2]||'').toUpperCase();if(u==='K'||u==='К')n*=1e3;else if(u==='M'||u==='М'||u==='МЛН')n*=1e6;else if(u==='B')n*=1e9;return Math.round(n);}
