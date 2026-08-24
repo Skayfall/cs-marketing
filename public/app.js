@@ -85,9 +85,26 @@
   let apiStatus = { mode: 'demo', integrations: {} };
   let currentUser = null;
 
+  const AUTH_TOKEN_KEY = 'cs-marketing-auth-token';
+
+  function getFallbackToken() {
+    try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch { return ''; }
+  }
+
+  function setFallbackToken(token) {
+    try {
+      if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+      else sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    } catch {}
+  }
+
   async function apiFetch(url, options = {}) {
-    const response = await fetch(url, { ...options, credentials: 'same-origin' });
+    const headers = new Headers(options.headers || {});
+    const token = getFallbackToken();
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(url, { ...options, headers, credentials: 'include', cache: options.cache || 'no-store' });
     if (response.status === 401) {
+      setFallbackToken('');
       showAuthScreen('Сессия закончилась. Войдите снова.');
       throw new Error('Требуется авторизация');
     }
@@ -117,8 +134,12 @@
 
   async function initAuth() {
     try {
-      const response = await fetch('/api/auth/session', { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+      const headers = new Headers({ Accept: 'application/json' });
+      const token = getFallbackToken();
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const response = await fetch('/api/auth/session', { headers, credentials: 'include', cache: 'no-store' });
       if (!response.ok) {
+        setFallbackToken('');
         showAuthScreen();
         return;
       }
@@ -143,12 +164,20 @@
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        credentials: 'same-origin',
+        credentials: 'include',
+        cache: 'no-store',
         body: JSON.stringify({ username, password })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Неверный логин или пароль');
-      await showApp(data.user);
+      if (data.token) setFallbackToken(data.token);
+
+      const verifyHeaders = new Headers({ Accept: 'application/json' });
+      if (data.token) verifyHeaders.set('Authorization', `Bearer ${data.token}`);
+      const verify = await fetch('/api/auth/session', { headers: verifyHeaders, credentials: 'include', cache: 'no-store' });
+      if (!verify.ok) throw new Error('Вход принят, но сервер не смог сохранить сессию.');
+      const verified = await verify.json().catch(() => ({}));
+      await showApp(verified.user || data.user);
     } catch (err) {
       error.textContent = err.message || 'Не удалось войти';
       error.hidden = false;
@@ -160,7 +189,8 @@
   }
 
   async function logout() {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include', cache: 'no-store' }); } catch {}
+    setFallbackToken('');
     showAuthScreen();
   }
 
