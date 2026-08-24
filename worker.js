@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v1.1 — unified marketing control center
+// CS Marketing by skayfall v1.2 — VK split: ads API isolated from community analytics
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
@@ -221,7 +221,7 @@ async function status(env) {
   const webmasterTarget = Boolean(env.WEBMASTER_HOST_ID || env.SITE_URL);
   const vkAdsReady = Boolean(env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET));
   const vkAdsPartial = Boolean(env.VK_ADS_CLIENT_SECRET && !env.VK_ADS_CLIENT_ID && !env.VK_ADS_TOKEN);
-  const vkSocialReady = Boolean(env.VK_COMMUNITY_TOKEN);
+  const vkSocialReady = Boolean(env.VK_COMMUNITY_TOKEN || env.VK_COMMUNITY_URL || env.VK_GROUP_ID);
   const telegramReady = Boolean(env.TELEGRAM_CHANNEL_URL || env.TELEGRAM_CHANNEL_USERNAME);
   const maxReady = Boolean(env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID);
   const maxPartial = Boolean((env.MAX_BOT_TOKEN || env.MAX_CHANNEL_ID) && !maxReady);
@@ -241,8 +241,8 @@ async function status(env) {
       ].filter(Boolean), 'api',
       { partial: vkAdsPartial, note: vkAdsPartial ? 'VK_ADS_CLIENT_SECRET уже есть; нужен только VK_ADS_CLIENT_ID как обычная Variable.' : null }),
     vksocial: item('vksocial', vkSocialReady,
-      [!env.VK_COMMUNITY_TOKEN && 'VK_COMMUNITY_TOKEN'].filter(Boolean), 'api',
-      { note: vkSocialReady && !env.VK_GROUP_ID ? 'ID сообщества приложение попробует определить автоматически по токену. VK_GROUP_ID нужен только как запасной вариант.' : null }),
+      [!vkSocialReady && 'VK_COMMUNITY_TOKEN или VK_COMMUNITY_URL/VK_GROUP_ID'].filter(Boolean), 'hybrid',
+      { note: vkSocialReady ? 'VK Реклама от этой интеграции не зависит. Токен сообщества используется только для статистики/идентификации. Посты читаются через service/user token, если он есть, иначе приложение пробует публичную страницу сообщества и не валит синхронизацию при ограничениях VK.' : null }),
     telegram: item('telegram', telegramReady,
       [!telegramReady && 'TELEGRAM_CHANNEL_URL'].filter(Boolean), 'public-web',
       { note: telegramReady ? 'Для публичного канала загружаются посты и просмотры из web-preview Telegram. Реакции и комментарии могут быть недоступны публично.' : 'Достаточно публичной ссылки канала, например https://t.me/имя_канала.' }),
@@ -264,6 +264,9 @@ async function status(env) {
     VK_ADS_CLIENT_SECRET: Boolean(env.VK_ADS_CLIENT_SECRET),
     VK_ADS_TOKEN: Boolean(env.VK_ADS_TOKEN),
     VK_COMMUNITY_TOKEN: Boolean(env.VK_COMMUNITY_TOKEN),
+    VK_SERVICE_TOKEN: Boolean(env.VK_SERVICE_TOKEN),
+    VK_USER_TOKEN: Boolean(env.VK_USER_TOKEN),
+    VK_COMMUNITY_URL: Boolean(env.VK_COMMUNITY_URL),
     VK_GROUP_ID: Boolean(env.VK_GROUP_ID),
     TELEGRAM_CHANNEL_URL: Boolean(env.TELEGRAM_CHANNEL_URL),
     TELEGRAM_CHANNEL_USERNAME: Boolean(env.TELEGRAM_CHANNEL_USERNAME),
@@ -638,6 +641,10 @@ async function syncVkAds(env) {
   if (!env.VK_ADS_TOKEN && !(env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) {
     throw new Error('Добавьте VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET в Cloudflare Runtime Variables/Secrets. Access token приложение получает само.');
   }
+  // Проверяем именно рекламный OAuth отдельно от VK-сообщества.
+  const accountInfo = await vkAdsGet(env, 'https://ads.vk.com/api/v3/user.json').catch(() => null);
+  const budgetInfo = await vkAdsGet(env, 'https://ads.vk.com/api/v2/budget.json').catch(() => null);
+
   const campaigns = [];
   for (let offset = 0; offset < 1000; offset += 50) {
     const page = await vkAdsGet(env, withParams('https://ads.vk.com/api/v2/ad_plans.json', { limit: 50, offset, fields: 'id,name,status' }));
@@ -678,8 +685,11 @@ async function syncVkAds(env) {
       ON CONFLICT(channel,campaign_id,date) DO UPDATE SET name=excluded.name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions`)
       .bind(String(r.id), names.get(String(r.id)) || `Кампания ${r.id}`, r.date, num(r.impressions), num(r.clicks), num(r.spend), num(r.conversions)).run();
   }
-  await logSync(env, 'vkads', 'ok', `VK Реклама: ${campaigns.length} кампаний, ${allRows.length} дневных строк. OAuth-токен обновляется автоматически.`);
-  return { message: `VK Реклама обновлена: ${campaigns.length} кампаний, ${allRows.length} строк статистики. Временный access token управляется приложением автоматически.` };
+  const accountLabel = String(accountInfo?.username || accountInfo?.email || accountInfo?.id || '').trim();
+  const budgetValue = num(budgetInfo?.balance ?? budgetInfo?.budget ?? budgetInfo?.available ?? budgetInfo?.amount);
+  const extra = [accountLabel && `кабинет ${accountLabel}`, budgetValue ? `доступный бюджет ${budgetValue.toFixed(2)} ₽` : ''].filter(Boolean).join(', ');
+  await logSync(env, 'vkads', 'ok', `VK Реклама: ${campaigns.length} кампаний, ${allRows.length} дневных строк${extra ? `, ${extra}` : ''}. OAuth-токен обновляется автоматически.`);
+  return { message: `VK Реклама обновлена отдельно от сообщества: ${campaigns.length} кампаний, ${allRows.length} строк статистики${extra ? `; ${extra}` : ''}. Временный access token управляется приложением автоматически.` };
 }
 
 async function getVkAdsToken(env, force = false) {
@@ -774,98 +784,205 @@ function extractVkStatsRows(payload) {
 /* -------------------- VK COMMUNITY -------------------- */
 
 async function syncVkCommunity(env) {
-  if (!env.VK_COMMUNITY_TOKEN) throw new Error('Добавьте VK_COMMUNITY_TOKEN в Cloudflare Runtime Secrets.');
-  const token = String(env.VK_COMMUNITY_TOKEN);
-  const group = await resolveVkCommunity(env, token);
-  const groupId = String(group.id);
-  const groupName = String(group.name || `VK ${groupId}`);
-  await saveResolved(env, 'vksocial', groupId, groupName);
+  const communityToken = String(env.VK_COMMUNITY_TOKEN || '').trim();
+  const readToken = String(env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || '').trim();
+  const group = await resolveVkCommunityHybrid(env, communityToken);
+  const groupId = group?.id ? String(group.id) : '';
+  const groupName = String(group?.name || group?.screen_name || 'VK-сообщество');
+  if (groupId) await saveResolved(env, 'vksocial', groupId, groupName);
 
-  const ownerId = `-${groupId}`;
-  const wall = await vkApi('wall.get', {
-    owner_id: ownerId,
-    count: 100,
-    filter: 'owner',
-    extended: 0
-  }, token);
-  const posts = Array.isArray(wall?.items) ? wall.items : [];
-
-  await env.DB.prepare(`DELETE FROM social_posts WHERE channel='VK'`).run();
-  for (const post of posts) {
-    const d = new Date(num(post?.date) * 1000);
-    if (Number.isNaN(d.getTime())) continue;
-    const text = String(post?.text || '').replace(/\s+/g, ' ').trim();
-    const title = text ? text.slice(0, 140) : `Пост VK ${post?.id || post?.date}`;
-    const views = num(post?.views?.count);
-    const reactions = num(post?.likes?.count);
-    const comments = num(post?.comments?.count);
-    const shares = num(post?.reposts?.count);
-    const attachments = Array.isArray(post?.attachments) ? post.attachments : [];
-    const mediaType = attachments.some(a=>a?.type==='video') ? 'video' : attachments.some(a=>a?.type==='photo') ? 'image' : attachments.some(a=>a?.type==='poll') ? 'poll' : 'text';
-    const postUrl = `https://vk.com/wall-${groupId}_${post?.id}`;
-    await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
-      VALUES('VK',?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
-      .bind(title,dateOnly(d),0,views,reactions,comments,shares,0,num(group.members_count),0,String(post?.id||''),postUrl,mediaType,text.length).run();
-  }
-
-  const end = new Date();
-  const start = new Date(); start.setDate(start.getDate() - 89);
-  const stats = await vkApi('stats.get', {
-    group_id: groupId,
-    timestamp_from: Math.floor(start.getTime()/1000),
-    timestamp_to: Math.floor((end.getTime()+86399000)/1000),
-    interval: 'day',
-    stats_groups: 'visitors,reach,activity'
-  }, token).catch(() => null);
-
-  await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='VK'`).run();
-  let statsRows = 0;
-  if (Array.isArray(stats)) {
-    for (const row of stats) {
-      const rawDate = row?.period_from ?? row?.timestamp_from ?? row?.date;
-      const stamp = num(rawDate);
-      const date = stamp > 1000000000 ? dateOnly(new Date(stamp * 1000)) : String(rawDate || '').slice(0,10);
-      if (!date) continue;
-      const visitorsBlock = row?.visitors || {};
-      const reachBlock = row?.reach || {};
-      const activity = row?.activity || {};
-      const views = num(visitorsBlock.views ?? row?.views);
-      const visitors = num(visitorsBlock.visitors ?? row?.visitors_count);
-      const reach = num(reachBlock.reach ?? reachBlock.total_reach ?? row?.reach_count ?? (typeof row?.reach === 'number' ? row.reach : 0));
-      const subscribersReach = num(reachBlock.reach_subscribers ?? reachBlock.subscribers_reach);
-      const subscribed = num(activity.subscribed ?? visitorsBlock.subscribed ?? row?.subscribed);
-      const unsubscribed = num(activity.unsubscribed ?? visitorsBlock.unsubscribed ?? row?.unsubscribed);
-      const likes = num(activity.likes ?? row?.likes);
-      const comments = num(activity.comments ?? row?.comments);
-      const shares = num(activity.copies ?? activity.reposts ?? row?.shares);
-      await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
-        VALUES('VK',?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,visitors=excluded.visitors,reach=excluded.reach,subscribers_reach=excluded.subscribers_reach,subscribed=excluded.subscribed,unsubscribed=excluded.unsubscribed,likes=excluded.likes,comments=excluded.comments,shares=excluded.shares`)
-        .bind(date,views,visitors,reach,subscribersReach,subscribed,unsubscribed,likes,comments,shares).run();
-      statsRows++;
+  // ВАЖНО: wall.get не вызывается с VK_COMMUNITY_TOKEN (group auth).
+  // Посты читаем либо отдельным service/user token, либо best-effort с публичной страницы.
+  let posts = [];
+  let postsSource = 'none';
+  let postsNote = '';
+  if (readToken && groupId) {
+    try {
+      const wall = await vkApi('wall.get', { owner_id: `-${groupId}`, count: 100, filter: 'owner', extended: 0 }, readToken);
+      posts = normalizeVkApiPosts(wall, groupId, group?.members_count);
+      postsSource = 'vk-api';
+    } catch (err) {
+      postsNote = `VK API для постов недоступен: ${err?.message || err}`;
     }
   }
 
-  const message = statsRows
-    ? `VK обновлён: ${posts.length} последних постов и ${statsRows} дней статистики сообщества.`
-    : `VK обновлён: ${posts.length} последних постов. Детальная статистика сообщества недоступна для этого токена — публикации всё равно загружены.`;
-  await logSync(env, 'vksocial', statsRows ? 'ok' : 'partial', message);
+  if (!posts.length) {
+    try {
+      posts = await fetchVkPublicPosts(env, group);
+      if (posts.length) postsSource = 'public-web';
+    } catch (err) {
+      postsNote = postsNote || `Публичная страница VK не отдала посты: ${err?.message || err}`;
+    }
+  }
+
+  if (posts.length) {
+    await env.DB.prepare(`DELETE FROM social_posts WHERE channel='VK'`).run();
+    for (const post of posts) {
+      await env.DB.prepare(`INSERT INTO social_posts(channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta,post_id,post_url,media_type,text_length,updated_at)
+        VALUES('VK',?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(channel,title,date) DO UPDATE SET reach=excluded.reach,views=excluded.views,reactions=excluded.reactions,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,followers=excluded.followers,followers_delta=excluded.followers_delta,post_id=excluded.post_id,post_url=excluded.post_url,media_type=excluded.media_type,text_length=excluded.text_length,updated_at=CURRENT_TIMESTAMP`)
+        .bind(post.title,post.date,num(post.reach),num(post.views),num(post.reactions),num(post.comments),num(post.shares),num(post.clicks),num(post.followers),num(post.followersDelta),String(post.postId||''),String(post.postUrl||''),String(post.mediaType||'text'),num(post.textLength)).run();
+    }
+  }
+
+  // Group-level stats are independent from wall.get. If group auth allows stats.get, keep them.
+  let statsRows = 0;
+  let statsNote = '';
+  if (communityToken && groupId) {
+    const end = new Date();
+    const start = new Date(); start.setDate(start.getDate() - 89);
+    try {
+      const stats = await vkApi('stats.get', {
+        group_id: groupId,
+        timestamp_from: Math.floor(start.getTime()/1000),
+        timestamp_to: Math.floor((end.getTime()+86399000)/1000),
+        interval: 'day',
+        stats_groups: 'visitors,reach,activity'
+      }, communityToken);
+      await env.DB.prepare(`DELETE FROM social_channel_daily WHERE channel='VK'`).run();
+      if (Array.isArray(stats)) {
+        for (const row of stats) {
+          const rawDate = row?.period_from ?? row?.timestamp_from ?? row?.date;
+          const stamp = num(rawDate);
+          const date = stamp > 1000000000 ? dateOnly(new Date(stamp * 1000)) : String(rawDate || '').slice(0,10);
+          if (!date) continue;
+          const visitorsBlock = row?.visitors || {};
+          const reachBlock = row?.reach || {};
+          const activity = row?.activity || {};
+          const views = num(visitorsBlock.views ?? row?.views);
+          const visitors = num(visitorsBlock.visitors ?? row?.visitors_count);
+          const reach = num(reachBlock.reach ?? reachBlock.total_reach ?? row?.reach_count ?? (typeof row?.reach === 'number' ? row.reach : 0));
+          const subscribersReach = num(reachBlock.reach_subscribers ?? reachBlock.subscribers_reach);
+          const subscribed = num(activity.subscribed ?? visitorsBlock.subscribed ?? row?.subscribed);
+          const unsubscribed = num(activity.unsubscribed ?? visitorsBlock.unsubscribed ?? row?.unsubscribed);
+          const likes = num(activity.likes ?? row?.likes);
+          const comments = num(activity.comments ?? row?.comments);
+          const shares = num(activity.copies ?? activity.reposts ?? row?.shares);
+          await env.DB.prepare(`INSERT INTO social_channel_daily(channel,date,views,visitors,reach,subscribers_reach,subscribed,unsubscribed,likes,comments,shares)
+            VALUES('VK',?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(channel,date) DO UPDATE SET views=excluded.views,visitors=excluded.visitors,reach=excluded.reach,subscribers_reach=excluded.subscribers_reach,subscribed=excluded.subscribed,unsubscribed=excluded.unsubscribed,likes=excluded.likes,comments=excluded.comments,shares=excluded.shares`)
+            .bind(date,views,visitors,reach,subscribersReach,subscribed,unsubscribed,likes,comments,shares).run();
+          statsRows++;
+        }
+      }
+    } catch (err) {
+      statsNote = `Статистика сообщества недоступна: ${err?.message || err}`;
+    }
+  }
+
+  const parts = [];
+  if (posts.length) parts.push(`${posts.length} постов (${postsSource === 'vk-api' ? 'VK API' : 'публичная страница'})`);
+  else parts.push('посты не загружены');
+  if (statsRows) parts.push(`${statsRows} дней статистики сообщества`);
+  const details = [postsNote, statsNote].filter(Boolean).join(' ');
+  const status = (posts.length || statsRows) ? (posts.length && statsRows ? 'ok' : 'partial') : 'partial';
+  const message = `VK Контент: ${parts.join(', ')}.${details ? ` ${details}` : ''} VK Реклама синхронизируется отдельно и от этого блока не зависит.`;
+  await logSync(env, 'vksocial', status, message);
   return { message };
 }
 
-async function resolveVkCommunity(env, token) {
-  if (env.VK_GROUP_ID) {
-    const response = await vkApi('groups.getById', { group_ids: String(env.VK_GROUP_ID), fields: 'members_count,screen_name' }, token);
-    const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
-    if (items[0]?.id) return items[0];
+function normalizeVkApiPosts(wall, groupId, followers = 0) {
+  const items = Array.isArray(wall?.items) ? wall.items : [];
+  return items.map(post => {
+    const d = new Date(num(post?.date) * 1000);
+    if (Number.isNaN(d.getTime())) return null;
+    const text = String(post?.text || '').replace(/\s+/g, ' ').trim();
+    const title = text ? text.slice(0, 140) : `Пост VK ${post?.id || post?.date}`;
+    const attachments = Array.isArray(post?.attachments) ? post.attachments : [];
+    const mediaType = attachments.some(a=>a?.type==='video') ? 'video' : attachments.some(a=>a?.type==='photo') ? 'image' : attachments.some(a=>a?.type==='poll') ? 'poll' : 'text';
+    return {
+      title, date: dateOnly(d), reach: 0, views: num(post?.views?.count), reactions: num(post?.likes?.count), comments: num(post?.comments?.count), shares: num(post?.reposts?.count), clicks: 0,
+      followers: num(followers), followersDelta: 0, postId: String(post?.id || ''), postUrl: `https://vk.com/wall-${groupId}_${post?.id}`, mediaType, textLength: text.length
+    };
+  }).filter(Boolean);
+}
+
+async function resolveVkCommunityHybrid(env, token) {
+  const explicitId = String(env.VK_GROUP_ID || '').replace(/^-/,'').trim();
+  const explicitUrl = String(env.VK_COMMUNITY_URL || '').trim();
+  const screenFromUrl = vkScreenNameFromUrl(explicitUrl);
+
+  if (token) {
+    if (explicitId) {
+      const response = await vkApi('groups.getById', { group_ids: explicitId, fields: 'members_count,screen_name' }, token).catch(() => null);
+      const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
+      if (items[0]?.id) return items[0];
+    }
+    if (screenFromUrl) {
+      const response = await vkApi('groups.getById', { group_ids: screenFromUrl, fields: 'members_count,screen_name' }, token).catch(() => null);
+      const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
+      if (items[0]?.id) return items[0];
+    }
+    const auto = await vkApi('groups.getById', { fields: 'members_count,screen_name' }, token).catch(() => null);
+    const autoItems = Array.isArray(auto?.groups) ? auto.groups : Array.isArray(auto) ? auto : [];
+    if (autoItems.length === 1 && autoItems[0]?.id) return autoItems[0];
   }
 
-  const auto = await vkApi('groups.getById', { fields: 'members_count,screen_name' }, token).catch(() => null);
-  const autoItems = Array.isArray(auto?.groups) ? auto.groups : Array.isArray(auto) ? auto : [];
-  if (autoItems.length === 1 && autoItems[0]?.id) return autoItems[0];
+  if (explicitId || screenFromUrl) return { id: explicitId || null, name: screenFromUrl || `VK ${explicitId}`, screen_name: screenFromUrl || '' };
+  throw new Error('Не удалось определить VK-сообщество. Добавьте VK_GROUP_ID или VK_COMMUNITY_URL. Это не влияет на VK Рекламу.');
+}
 
-  throw new Error('VK_COMMUNITY_TOKEN найден, но ID сообщества не удалось определить автоматически. Добавьте VK_GROUP_ID как обычную Cloudflare Variable.');
+function vkScreenNameFromUrl(value) {
+  if (!value) return '';
+  try {
+    const u = new URL(value.startsWith('http') ? value : `https://vk.com/${value.replace(/^\/+/, '')}`);
+    return u.pathname.replace(/^\/+|\/+$/g,'').split('/')[0] || '';
+  } catch { return String(value).replace(/^@|^https?:\/\/(?:m\.)?vk\.com\//i,'').split(/[/?#]/)[0]; }
+}
+
+async function fetchVkPublicPosts(env, group) {
+  const screen = vkScreenNameFromUrl(env.VK_COMMUNITY_URL || '') || String(group?.screen_name || '').trim();
+  const groupId = String(group?.id || env.VK_GROUP_ID || '').replace(/^-/,'');
+  const target = screen ? `https://m.vk.com/${encodeURIComponent(screen)}` : groupId ? `https://m.vk.com/club${encodeURIComponent(groupId)}` : '';
+  if (!target) return [];
+  const res = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CSMarketing/1.2)', 'Accept-Language': 'ru,en;q=0.8' }, redirect: 'follow' });
+  const html = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (/captcha|security check|login_form|blocked/i.test(html) && !/wall-?\d+_\d+/i.test(html)) throw new Error('VK запросил авторизацию/проверку вместо публичной стены');
+  return parseVkPublicHtml(html, groupId, num(group?.members_count));
+}
+
+function parseVkPublicHtml(html, knownGroupId = '', followers = 0) {
+  // Best-effort parser. We only save values explicitly present in public HTML; missing metrics stay 0.
+  const decoded = decodeHtmlEntities(String(html || ''));
+  const postRe = /(?:wall|data-post-id=["']?)(-?\d+)_([0-9]+)/ig;
+  const hits = [];
+  let m;
+  while ((m = postRe.exec(decoded)) && hits.length < 120) {
+    const owner = String(m[1]).replace(/^-/,'');
+    const postId = String(m[2]);
+    if (knownGroupId && owner !== String(knownGroupId)) continue;
+    if (!hits.some(x=>x.postId===postId)) hits.push({ owner, postId, index:m.index });
+  }
+  const out = [];
+  for (let i=0;i<hits.length && out.length<100;i++) {
+    const h=hits[i];
+    const from=Math.max(0,h.index-2500), to=Math.min(decoded.length,(hits[i+1]?.index||h.index+12000));
+    const chunk=decoded.slice(from,to);
+    const unix = firstRegexNumber(chunk, /(?:data-time|data-date|unixtime)[=:\"'\s]+(\d{10})/i);
+    const isoDate = firstRegexText(chunk, /datetime=["'](\d{4}-\d{2}-\d{2})/i);
+    const d = unix ? new Date(unix*1000) : isoDate ? new Date(`${isoDate}T12:00:00`) : null;
+    if (!d || Number.isNaN(d.getTime())) continue;
+    const textHtml = firstRegexText(chunk, /(?:wall_post_text|pi_text|post__text)[^>]*>([\s\S]*?)(?:<\/div>|<\/p>)/i) || '';
+    const text = stripTags(textHtml).replace(/\s+/g,' ').trim();
+    const title = text ? text.slice(0,140) : `Пост VK ${h.postId}`;
+    const views = parseCompactNumber(firstRegexText(chunk, /(?:like_views|views_count|post_views)[^>]*>\s*([^<]+)/i));
+    const reactions = parseCompactNumber(firstRegexText(chunk, /(?:like_count|likes_count|_like_count)[^>]*>\s*([^<]+)/i));
+    const comments = parseCompactNumber(firstRegexText(chunk, /(?:comment_count|comments_count)[^>]*>\s*([^<]+)/i));
+    const shares = parseCompactNumber(firstRegexText(chunk, /(?:repost_count|share_count|reposts_count)[^>]*>\s*([^<]+)/i));
+    const mediaType = /video/i.test(chunk) ? 'video' : /photo|image/i.test(chunk) ? 'image' : /poll/i.test(chunk) ? 'poll' : 'text';
+    out.push({ title,date:dateOnly(d),reach:0,views,reactions,comments,shares,clicks:0,followers,followersDelta:0,postId:h.postId,postUrl:`https://vk.com/wall-${h.owner}_${h.postId}`,mediaType,textLength:text.length });
+  }
+  return out;
+}
+
+function firstRegexText(value, re) { const m=String(value||'').match(re); return m ? String(m[1]||'').trim() : ''; }
+function firstRegexNumber(value, re) { const x=Number(firstRegexText(value,re)); return Number.isFinite(x) ? x : 0; }
+function stripTags(value) { return decodeHtmlEntities(String(value||'').replace(/<br\s*\/?\s*>/gi,' ').replace(/<[^>]+>/g,' ')); }
+function decodeHtmlEntities(value) { return String(value||'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>'); }
+
+async function resolveVkCommunity(env, token) {
+  return resolveVkCommunityHybrid(env, token);
 }
 
 async function vkApi(method, params, token) {
