@@ -1,11 +1,11 @@
 {
   "name": "CS Marketing by skayfall",
   "short_name": "CS Marketing",
-  "description": "Внутренний маркетинговый workspace ПТГ «Центр Сантехники»",
+  "description": "Маркетинговый рабочий центр ПТГ «Центр Сантехники»",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F4F3EF",
-  "theme_color": "#0B1020",
+  "background_color": "#F3F1EC",
+  "theme_color": "#171719",
   "icons": [
     {"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
     {"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
