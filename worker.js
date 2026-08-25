@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.1 — marketing OS: analytics + product search + Yandex Business + workspace
+// CS Marketing by skayfall v2.2 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -37,11 +37,11 @@ async function handleApi(request, env, ctx, url) {
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
+  if (request.method === 'GET' && url.pathname === '/api/range') return rangeAnalytics(url, env);
   if (request.method === 'GET' && url.pathname === '/api/workspace') return workspaceData(env);
   if (request.method === 'POST' && url.pathname === '/api/workspace/upsert') return workspaceUpsert(request, env);
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/workspace/item/')) return workspaceDelete(url, env);
   if (request.method === 'POST' && url.pathname === '/api/ybusiness/import') return importYandexBusiness(request, env);
-  if (request.method === 'POST' && url.pathname === '/api/yproducts/import') return importYandexProducts(request, env);
   if (request.method === 'POST' && url.pathname === '/api/sync/all') return json(await syncConfigured(env), 200);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
   const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
@@ -182,8 +182,6 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`,
       `CREATE TABLE IF NOT EXISTS yandex_business_daily (date TEXT PRIMARY KEY, profile_views REAL DEFAULT 0, target_clients REAL DEFAULT 0, target_actions REAL DEFAULT 0, routes REAL DEFAULT 0, calls REAL DEFAULT 0, website_clicks REAL DEFAULT 0, direct_visits REAL DEFAULT 0, discovery_visits REAL DEFAULT 0, photo_views REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS yandex_business_queries (query TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', visits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(query,service))`,
-      `CREATE TABLE IF NOT EXISTS product_search_daily (url TEXT NOT NULL, date TEXT NOT NULL, popular_query TEXT, impressions REAL DEFAULT 0, clicks REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, demand REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(url,date))`,
-      `CREATE TABLE IF NOT EXISTS yandex_products_import (url TEXT PRIMARY KEY, impressions REAL DEFAULT 0, clicks REAL DEFAULT 0, ctr REAL DEFAULT 0, avg_position REAL DEFAULT 0, share_in_serp REAL DEFAULT 0, queries_count REAL DEFAULT 0, imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS workspace_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT, status TEXT, title TEXT NOT NULL, body TEXT, priority TEXT DEFAULT 'medium', due_date TEXT, checked INTEGER DEFAULT 0, pinned INTEGER DEFAULT 0, sort_order INTEGER DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS integration_cache (cache_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, expires_at INTEGER DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
     ];
@@ -248,9 +246,6 @@ async function status(env) {
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean)),
     webmaster: item('webmaster', yandexBase && webmasterTarget,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID'].filter(Boolean)),
-    yproducts: item('webmaster', yandexBase && webmasterTarget && metrikaTarget,
-      [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean), 'derived',
-      { note: 'Товарная аналитика строится автоматически из Вебмастера (видимость URL) + Метрики (поведение после перехода). Точная «доля в выдачах» дополняется импортом XLSX из Яндекс Товаров.' }),
     direct: item('direct', yandexBase,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN'].filter(Boolean), 'api',
       { note: yandexBase ? 'Используется тот же YANDEX_TOKEN. До одобрения заявки Direct API синхронизация может возвращать ошибку доступа.' : null }),
@@ -312,7 +307,7 @@ async function status(env) {
 
 async function dashboard(env) {
   const q = async (sql) => (await env.DB.prepare(sql).all()).results || [];
-  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, productSearch, productsImported, workspace, syncLog, resolvedRows] = await Promise.all([
+  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog, resolvedRows] = await Promise.all([
     q(`SELECT date,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,conversions,new_visitors AS newVisitors,email_clicks AS emailClicks,form_submits AS formSubmits FROM daily_site_metrics ORDER BY date`),
     q(`SELECT period_days AS periodDays,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,new_visitors AS newVisitors,conversions,email_clicks AS emailClicks,form_submits AS formSubmits FROM site_period_summary ORDER BY period_days`),
     q(`SELECT name,visits,users,bounce,conversions FROM traffic_sources WHERE period_key=(SELECT MAX(period_key) FROM traffic_sources) ORDER BY visits DESC`),
@@ -335,8 +330,6 @@ async function dashboard(env) {
     q(`SELECT campaign_id AS campaignId,url,clicks FROM email_links ORDER BY clicks DESC LIMIT 500`),
     q(`SELECT date,profile_views AS profileViews,target_clients AS targetClients,target_actions AS targetActions,routes,calls,website_clicks AS websiteClicks,direct_visits AS directVisits,discovery_visits AS discoveryVisits,photo_views AS photoViews FROM yandex_business_daily ORDER BY date`),
     q(`SELECT query,service,visits FROM yandex_business_queries ORDER BY visits DESC LIMIT 200`),
-    q(`SELECT url,date,popular_query AS popularQuery,impressions,clicks,ctr,position,demand FROM product_search_daily ORDER BY date,url`),
-    q(`SELECT url,impressions,clicks,ctr,avg_position AS avgPosition,share_in_serp AS shareInSerp,queries_count AS queriesCount,imported_at AS importedAt FROM yandex_products_import ORDER BY impressions DESC`),
     q(`SELECT id,kind,parent_id AS parentId,status,title,body,priority,due_date AS dueDate,checked,pinned,sort_order AS sortOrder,created_at AS createdAt,updated_at AS updatedAt FROM workspace_items ORDER BY pinned DESC, sort_order, updated_at DESC`),
     q(`SELECT source,last_sync AS lastSync,status,message FROM sync_log ORDER BY source`),
     q(`SELECT source,external_id AS externalId,label FROM resolved_integrations`)
@@ -350,9 +343,94 @@ async function dashboard(env) {
   return json({
     site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
     seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
-    adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, productSearch, productsImported, workspace, syncLog,
+    adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog,
     meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
   });
+}
+
+
+async function rangeAnalytics(url, env) {
+  const { from, to, days } = validateRange(url.searchParams.get('from'), url.searchParams.get('to'));
+  const result = { from, to, days, metrika: null, webmaster: null, warnings: [] };
+
+  if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) {
+    try { result.metrika = await metrikaRangeData(env, from, to); }
+    catch (err) { result.warnings.push(`Метрика: ${err?.message || err}`); }
+  } else result.warnings.push('Метрика: нет YANDEX_TOKEN или SITE_URL/METRIKA_COUNTER_ID');
+
+  if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) {
+    try { result.webmaster = await webmasterRangeData(env, from, to); }
+    catch (err) { result.warnings.push(`Вебмастер: ${err?.message || err}`); }
+  }
+  return json(result, 200);
+}
+
+function validateRange(fromRaw, toRaw) {
+  const today = dateOnly(new Date());
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(toRaw || '')) ? String(toRaw) : today;
+  const fallback = new Date(`${to}T12:00:00Z`); fallback.setUTCDate(fallback.getUTCDate() - 29);
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(fromRaw || '')) ? String(fromRaw) : dateOnly(fallback);
+  const a = new Date(`${from}T12:00:00Z`), b = new Date(`${to}T12:00:00Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || a > b) throw new Error('Некорректный период');
+  const days = Math.floor((b - a) / 86400000) + 1;
+  if (days < 1 || days > 366) throw new Error('Период должен быть от 1 до 366 дней');
+  return { from, to, days };
+}
+
+async function metrikaRangeData(env, from, to) {
+  const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
+  const counterId = await resolveMetrikaCounterId(env, headers);
+  const base = 'https://api-metrika.yandex.net/stat/v1/data';
+  const common = { ids: counterId, date1: from, date2: to, accuracy: 'full' };
+  const defs = [
+    ['sources', { dimensions:'ym:s:trafficSourceName', metrics:'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:anyGoalReaches', sort:'-ym:s:visits', limit:'100' }],
+    ['pages', { dimensions:'ym:s:startURL', metrics:'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds,ym:s:anyGoalReaches', sort:'-ym:s:visits', limit:'1000' }],
+    ['devices', { dimensions:'ym:s:deviceCategory', metrics:'ym:s:visits,ym:s:users', sort:'-ym:s:visits', limit:'30' }],
+    ['regions', { dimensions:'ym:s:regionArea', metrics:'ym:s:visits,ym:s:users', sort:'-ym:s:visits', limit:'50' }],
+    ['searchEngines', { dimensions:'ym:s:searchEngineName', metrics:'ym:s:visits,ym:s:users', sort:'-ym:s:visits', limit:'50' }],
+    ['utm', { dimensions:'ym:s:lastSignUTMSource,ym:s:lastSignUTMMedium,ym:s:lastSignUTMCampaign', metrics:'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds,ym:s:anyGoalReaches', sort:'-ym:s:visits', limit:'300' }],
+    ['searchPhrases', { dimensions:'ym:s:lastSignSearchEngineRootName,ym:s:lastSignSearchPhrase', metrics:'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds', sort:'-ym:s:visits', limit:'250' }]
+  ];
+  const settled = await Promise.allSettled(defs.map(([,params]) => apiGet(withParams(base, { ...common, ...params }), headers)));
+  const raw = Object.fromEntries(defs.map(([name],i) => [name, settled[i].status === 'fulfilled' ? settled[i].value : { data: [] }]));
+
+  const sources = (raw.sources.data || []).map(r => { const m=r.metrics||[]; return { name:dimensionName(r.dimensions?.[0])||'Прочее', visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), conversions:num(m[3]) }; });
+  const pages = (raw.pages.data || []).map(r => { const m=r.metrics||[], page=dimensionName(r.dimensions?.[0])||''; return { page, title:page, visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), depth:num(m[3]), duration:num(m[4]), conversions:num(m[5]) }; }).filter(x=>x.page);
+  const simple = key => (raw[key].data || []).map(r => ({ name:dimensionName(r.dimensions?.[0])||'Прочее', visits:num(r.metrics?.[0]), users:num(r.metrics?.[1]) }));
+  const utm = (raw.utm.data || []).map(r => { const m=r.metrics||[]; return { source:dimensionName(r.dimensions?.[0])||'(не задано)', medium:dimensionName(r.dimensions?.[1])||'(не задано)', campaign:dimensionName(r.dimensions?.[2])||'(не задано)', visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), depth:num(m[3]), duration:num(m[4]), conversions:num(m[5]) }; }).filter(x=>!(x.source==='(не задано)'&&x.medium==='(не задано)'&&x.campaign==='(не задано)'));
+  const searchPhrases = (raw.searchPhrases.data || []).map(r => { const m=r.metrics||[]; return { engine:dimensionName(r.dimensions?.[0])||'Поиск', phrase:dimensionName(r.dimensions?.[1])||'', visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), depth:num(m[3]), duration:num(m[4]) }; }).filter(x=>x.phrase);
+
+  const goalsInfo = await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(counterId)}/goals`, headers).catch(() => ({ goals: [] }));
+  const goalsDef = (goalsInfo.goals || []).filter(g=>g?.status!=='DELETED').map(g=>({...g,category:classifyGoal(g)}));
+  const totalVisits = sources.reduce((a,x)=>a+num(x.visits),0) || num((await apiGet(withParams(base,{...common,metrics:'ym:s:visits'}),headers).catch(()=>({totals:[0]}))).totals?.[0]);
+  const goals=[];
+  for (const group of chunks(goalsDef,20)) {
+    if(!group.length) continue;
+    const metrics=group.map(g=>`ym:s:goal${g.id}reaches`).join(',');
+    const report=await apiGet(withParams(base,{...common,metrics}),headers).catch(()=>({totals:[]}));
+    group.forEach((g,i)=>{const reaches=num(report.totals?.[i]);goals.push({goalId:String(g.id),name:String(g.name||`Цель ${g.id}`),type:String(g.type||''),category:g.category||'other',reaches,visits:totalVisits,conversionRate:totalVisits?reaches/totalVisits*100:0});});
+  }
+  return { counterId, sources, pages, devices:simple('devices'), regions:simple('regions'), searchEngines:simple('searchEngines'), utm, searchPhrases, goals };
+}
+
+async function webmasterRangeData(env, from, to) {
+  const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
+  const user = await apiGet('https://api.webmaster.yandex.net/v4/user', headers);
+  const uid = user.user_id || user.userId;
+  if (!uid) throw new Error('Вебмастер не вернул user_id');
+  const hostId = await resolveWebmasterHostId(env, headers, uid);
+  const root = `https://api.webmaster.yandex.net/v4/user/${uid}/hosts/${encodeURIComponent(hostId)}`;
+  const a=new Date(`${from}T12:00:00Z`), b=new Date(`${to}T12:00:00Z`), days=Math.floor((b-a)/86400000)+1;
+  const prevTo=new Date(a); prevTo.setUTCDate(prevTo.getUTCDate()-1);
+  const prevFrom=new Date(prevTo); prevFrom.setUTCDate(prevFrom.getUTCDate()-(days-1));
+  const params={order_by:'TOTAL_SHOWS',query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'],date_from:from,date_to:to,limit:'500'};
+  const [cur, prev] = await Promise.all([
+    apiGet(withParams(`${root}/search-queries/popular`,params),headers),
+    apiGet(withParams(`${root}/search-queries/popular`,{...params,date_from:dateOnly(prevFrom),date_to:dateOnly(prevTo)}),headers).catch(()=>({queries:[]}))
+  ]);
+  const prevMap=new Map((prev.queries||[]).map(q=>[q.query_text,q]));
+  const seo=(cur.queries||[]).map(q=>{const ind=q.indicators||{},shows=num(ind.TOTAL_SHOWS),clicks=num(ind.TOTAL_CLICKS),position=num(ind.AVG_SHOW_POSITION),clickPosition=num(ind.AVG_CLICK_POSITION),prevPos=num(prevMap.get(q.query_text)?.indicators?.AVG_SHOW_POSITION);return {query:q.query_text,shows,clicks,ctr:shows?clicks/shows*100:0,position,clickPosition,delta:prevPos&&position?prevPos-position:0};});
+  return { hostId, seo };
 }
 
 async function syncConfigured(env) {
@@ -398,7 +476,7 @@ async function syncMetrika(env) {
   const counterId = await resolveMetrikaCounterId(env, headers);
   await saveResolved(env, 'metrika', counterId, env.SITE_URL || `Счётчик ${counterId}`);
   const base = 'https://api-metrika.yandex.net/stat/v1/data';
-  const common = { ids: counterId, date1: '179daysAgo', date2: 'today', accuracy: 'full' };
+  const common = { ids: counterId, date1: '364daysAgo', date2: 'today', accuracy: 'full' };
 
   const goalsInfo = await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(counterId)}/goals`, headers).catch(() => ({ goals: [] }));
   const goals = (goalsInfo.goals || []).filter(g => g?.status !== 'DELETED');
@@ -558,7 +636,7 @@ async function syncWebmaster(env) {
   const end = new Date(), start = new Date(); start.setDate(start.getDate() - 29);
   const prevStart = new Date(); prevStart.setDate(prevStart.getDate() - 59);
   const prevEnd = new Date(); prevEnd.setDate(prevEnd.getDate() - 30);
-  const historyStart = new Date(); historyStart.setDate(historyStart.getDate() - 89);
+  const historyStart = new Date(); historyStart.setDate(historyStart.getDate() - 364);
   const params = { order_by: 'TOTAL_SHOWS', query_indicator: ['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'], date_from: dateOnly(start), date_to: dateOnly(end), limit: '500' };
 
   const [current, prev, summary, diagnostics, indexHistory] = await Promise.all([
@@ -617,53 +695,6 @@ async function syncWebmaster(env) {
 }
 
 
-async function fetchProductUrlAnalytics(root, headers) {
-  const rows = [];
-  let offset = 0;
-  let total = 0;
-  const limit = 500;
-  do {
-    const res = await fetch(`${root}/query-analytics/list`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({
-        offset,
-        limit,
-        device_type_indicator: 'ALL',
-        search_location: 'ALL_LOCATIONS_ORGANIC',
-        text_indicator: 'URL',
-        filters: { text_filters: [{ text_indicator: 'URL', operation: 'TEXT_CONTAINS', value: '/catalog/' }] }
-      })
-    });
-    const text = await res.text();
-    let data = {}; try { data = JSON.parse(text); } catch {}
-    if (!res.ok) throw new Error(`Вебмастер URL analytics ${res.status}: ${data?.error_message || text.slice(0,300)}`);
-    const items = data.text_indicator_to_statistics || data.textIndicatorToStatistics || [];
-    total = num(data.count) || items.length;
-    for (const item of items) {
-      const url = String(item?.text_indicator?.value || item?.textIndicator?.value || '').trim();
-      if (!url || !/\/catalog\//i.test(url)) continue;
-      const popularQuery = String(item?.popular_complementary_indicator?.value || item?.popularComplementaryIndicator?.value || '').trim();
-      const byDate = new Map();
-      for (const st of item.statistics || []) {
-        const date = String(st.date || '').slice(0,10); if (!date) continue;
-        const rec = byDate.get(date) || { url, date, popularQuery, impressions:0, clicks:0, ctr:0, position:0, demand:0 };
-        const field = String(st.field || '').toUpperCase(), value = num(st.value);
-        if (field === 'IMPRESSIONS') rec.impressions = value;
-        else if (field === 'CLICKS') rec.clicks = value;
-        else if (field === 'CTR') rec.ctr = value;
-        else if (field === 'POSITION') rec.position = value;
-        else if (field === 'DEMAND') rec.demand = value;
-        byDate.set(date, rec);
-      }
-      rows.push(...byDate.values());
-    }
-    offset += items.length;
-    if (!items.length) break;
-  } while (offset < total && offset < 3000);
-  return rows;
-}
-
 /* -------------------- YANDEX DIRECT -------------------- */
 
 async function syncDirect(env) {
@@ -691,7 +722,7 @@ async function syncDirect(env) {
       .bind(String(c.Id),String(c.Name || `Кампания ${c.Id}`),directStateRu(c.State),String(c.State || c.Status || '')).run();
   }
 
-  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 89);
+  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 364);
   const reportBody = { params: {
     SelectionCriteria: { DateFrom: dateOnly(start), DateTo: dateOnly(end) },
     FieldNames: ['Date','CampaignId','CampaignName','Impressions','Clicks','Ctr','Cost','AvgCpc','Conversions','ConversionRate','CostPerConversion','BounceRate','AvgPageviews'],
@@ -755,7 +786,7 @@ async function syncVkAds(env) {
       .bind(String(c.id), String(c.name || `Кампания ${c.id}`), vkAdsState(c.status), String(c.status || '')).run();
   }
 
-  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 89);
+  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 364);
   const ids = campaigns.map(c => c?.id).filter(Boolean).map(String);
   const allRows = [];
   for (const group of chunks(ids, 200)) {
@@ -924,7 +955,7 @@ async function syncVkCommunity(env) {
   let statsNote = '';
   if (communityToken && groupId) {
     const end = new Date();
-    const start = new Date(); start.setDate(start.getDate() - 89);
+    const start = new Date(); start.setDate(start.getDate() - 364);
     try {
       const stats = await vkApi('stats.get', {
         group_id: groupId,
@@ -1358,7 +1389,7 @@ function decodeHtml(s){return String(s||'').replace(/&nbsp;/gi,' ').replace(/&am
 
 async function syncUnisender(env) {
   if (!env.UNISENDER_API_KEY) throw new Error('Добавьте UNISENDER_API_KEY в Cloudflare Runtime Secrets.');
-  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 89);
+  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 364);
   const from = `${dateOnly(start)} 00:00:00`, to = `${dateOnly(end)} 23:59:59`;
   const listUrl = withParams('https://api.unisender.com/ru/api/getCampaigns', { format:'json', api_key:env.UNISENDER_API_KEY, from, to, limit:200, offset:0 });
   const list = await apiGet(listUrl, {});
@@ -1471,23 +1502,6 @@ async function importYandexBusiness(request, env) {
 
 /* -------------------- IMPORTS -------------------- */
 
-
-async function importYandexProducts(request, env) {
-  let body; try { body = await request.json(); } catch { return json({ error:'Некорректный JSON' },400); }
-  const rows = Array.isArray(body?.rows) ? body.rows.slice(0,5000) : [];
-  if (!rows.length) return json({ error:'В файле не найдено строк отчёта Яндекс Товаров.' },400);
-  await env.DB.prepare('DELETE FROM yandex_products_import').run();
-  let saved = 0;
-  for (const r of rows) {
-    const url = String(r.url || '').trim(); if (!url) continue;
-    await env.DB.prepare(`INSERT INTO yandex_products_import(url,impressions,clicks,ctr,avg_position,share_in_serp,queries_count,imported_at) VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(url) DO UPDATE SET impressions=excluded.impressions,clicks=excluded.clicks,ctr=excluded.ctr,avg_position=excluded.avg_position,share_in_serp=excluded.share_in_serp,queries_count=excluded.queries_count,imported_at=CURRENT_TIMESTAMP`)
-      .bind(url,num(r.impressions),num(r.clicks),num(r.ctr),num(r.avgPosition),num(r.shareInSerp),num(r.queriesCount)).run();
-    saved++;
-  }
-  await logSync(env,'yproducts','ok',`Яндекс Товары: импортировано ${saved} страниц из XLSX/CSV`).catch(()=>{});
-  return json({ message:`Яндекс Товары: импортировано ${saved} строк. Точная доля в выдачах сохранена.`, saved },200);
-}
 
 async function importRows(request, env) {
   const { source, rows, mode } = await request.json();
