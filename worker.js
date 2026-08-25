@@ -1,7 +1,7 @@
-// CS Marketing by skayfall v1.3 — public social monitoring: VK + Telegram + MAX + Dzen
+// CS Marketing by skayfall v2.0 — marketing OS: analytics + Yandex Business + workspace
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
-const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const SESSION_TTL_SECONDS = 60 * 60 * 4;
 const AUTH_HEADER_PREFIX = 'Bearer ';
 const DEFAULT_SOCIAL_URLS = {
   vk: 'https://vk.ru/centr_santechniki',
@@ -37,6 +37,10 @@ async function handleApi(request, env, ctx, url) {
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
+  if (request.method === 'GET' && url.pathname === '/api/workspace') return workspaceData(env);
+  if (request.method === 'POST' && url.pathname === '/api/workspace/upsert') return workspaceUpsert(request, env);
+  if (request.method === 'DELETE' && url.pathname.startsWith('/api/workspace/item/')) return workspaceDelete(url, env);
+  if (request.method === 'POST' && url.pathname === '/api/ybusiness/import') return importYandexBusiness(request, env);
   if (request.method === 'POST' && url.pathname === '/api/sync/all') return json(await syncConfigured(env), 200);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
   const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
@@ -175,6 +179,9 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS email_links (campaign_id TEXT NOT NULL, url TEXT NOT NULL, clicks REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(campaign_id,url))`,
       `CREATE TABLE IF NOT EXISTS utm_stats (period_key TEXT NOT NULL, source TEXT NOT NULL, medium TEXT NOT NULL, campaign TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, conversions REAL DEFAULT 0, PRIMARY KEY(period_key,source,medium,campaign))`,
       `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`,
+      `CREATE TABLE IF NOT EXISTS yandex_business_daily (date TEXT PRIMARY KEY, profile_views REAL DEFAULT 0, target_clients REAL DEFAULT 0, target_actions REAL DEFAULT 0, routes REAL DEFAULT 0, calls REAL DEFAULT 0, website_clicks REAL DEFAULT 0, direct_visits REAL DEFAULT 0, discovery_visits REAL DEFAULT 0, photo_views REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS yandex_business_queries (query TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', visits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(query,service))`,
+      `CREATE TABLE IF NOT EXISTS workspace_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT, status TEXT, title TEXT NOT NULL, body TEXT, priority TEXT DEFAULT 'medium', due_date TEXT, checked INTEGER DEFAULT 0, pinned INTEGER DEFAULT 0, sort_order INTEGER DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS integration_cache (cache_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, expires_at INTEGER DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
     ];
     for (const sql of creates) await env.DB.prepare(sql).run();
@@ -255,6 +262,8 @@ async function status(env) {
       { note: `Посты проверяются по публичной странице ${env.MAX_CHANNEL_URL || DEFAULT_SOCIAL_URLS.max}. Bot API используется как расширенный источник, если настроен.` }),
     dzen: item('dzen', dzenReady, [], 'public-web',
       { note: `Публикации проверяются по публичной странице ${env.DZEN_CHANNEL_URL || DEFAULT_SOCIAL_URLS.dzen}. Сохраняются только метрики, которые Дзен реально отдаёт в публичной странице.` }),
+    ybusiness: item('ybusiness', true, [], 'excel-import',
+      { note: 'Статистика Яндекс Бизнеса загружается из официальной Excel-выгрузки раздела Статистика → Профиль в Яндексе.' }),
     unisender: item('unisender', Boolean(env.UNISENDER_API_KEY),
       [!env.UNISENDER_API_KEY && 'UNISENDER_API_KEY'].filter(Boolean))
   };
@@ -297,7 +306,7 @@ async function status(env) {
 
 async function dashboard(env) {
   const q = async (sql) => (await env.DB.prepare(sql).all()).results || [];
-  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, syncLog, resolvedRows] = await Promise.all([
+  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog, resolvedRows] = await Promise.all([
     q(`SELECT date,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,conversions,new_visitors AS newVisitors,email_clicks AS emailClicks,form_submits AS formSubmits FROM daily_site_metrics ORDER BY date`),
     q(`SELECT period_days AS periodDays,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,new_visitors AS newVisitors,conversions,email_clicks AS emailClicks,form_submits AS formSubmits FROM site_period_summary ORDER BY period_days`),
     q(`SELECT name,visits,users,bounce,conversions FROM traffic_sources WHERE period_key=(SELECT MAX(period_key) FROM traffic_sources) ORDER BY visits DESC`),
@@ -318,6 +327,9 @@ async function dashboard(env) {
     q(`SELECT channel,date,views,visitors,reach,subscribers_reach AS subscribersReach,subscribed,unsubscribed,likes,comments,shares FROM social_channel_daily ORDER BY date`),
     q(`SELECT id,name,date,status,sent,delivered,opened,opened_all AS openedAll,clicked,clicked_all AS clickedAll,unsub,spam,errors,report_url AS reportUrl FROM email_campaigns ORDER BY date DESC`),
     q(`SELECT campaign_id AS campaignId,url,clicks FROM email_links ORDER BY clicks DESC LIMIT 500`),
+    q(`SELECT date,profile_views AS profileViews,target_clients AS targetClients,target_actions AS targetActions,routes,calls,website_clicks AS websiteClicks,direct_visits AS directVisits,discovery_visits AS discoveryVisits,photo_views AS photoViews FROM yandex_business_daily ORDER BY date`),
+    q(`SELECT query,service,visits FROM yandex_business_queries ORDER BY visits DESC LIMIT 200`),
+    q(`SELECT id,kind,parent_id AS parentId,status,title,body,priority,due_date AS dueDate,checked,pinned,sort_order AS sortOrder,created_at AS createdAt,updated_at AS updatedAt FROM workspace_items ORDER BY pinned DESC, sort_order, updated_at DESC`),
     q(`SELECT source,last_sync AS lastSync,status,message FROM sync_log ORDER BY source`),
     q(`SELECT source,external_id AS externalId,label FROM resolved_integrations`)
   ]);
@@ -330,7 +342,7 @@ async function dashboard(env) {
   return json({
     site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
     seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
-    adsMeta, adsDaily, social, socialDaily, email, emailLinks, syncLog,
+    adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog,
     meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
   });
 }
@@ -1322,6 +1334,72 @@ async function syncUnisender(env) {
 
   await logSync(env,'unisender','ok',`UniSender: ${completed} рассылок`);
   return { message: `UniSender обновлён: ${completed} рассылок за последние 90 дней.` };
+}
+
+/* -------------------- YANDEX BUSINESS + WORKSPACE -------------------- */
+
+async function workspaceData(env) {
+  const rows = (await env.DB.prepare(`SELECT id,kind,parent_id AS parentId,status,title,body,priority,due_date AS dueDate,checked,pinned,sort_order AS sortOrder,created_at AS createdAt,updated_at AS updatedAt FROM workspace_items ORDER BY pinned DESC, sort_order, updated_at DESC`).all()).results || [];
+  return json({ items: rows });
+}
+
+async function workspaceUpsert(request, env) {
+  const body = await request.json();
+  const item = body?.item || body || {};
+  const kind = String(item.kind || '').trim();
+  const title = String(item.title || '').trim().slice(0,240);
+  if (!kind || !title) return json({ error: 'Для записи нужны kind и title' }, 400);
+  const allowedKinds = new Set(['kanban','checklist','checkitem','note']);
+  if (!allowedKinds.has(kind)) return json({ error: 'Неизвестный тип записи' }, 400);
+  const id = String(item.id || `${kind}-${crypto.randomUUID()}`);
+  const parentId = item.parentId ? String(item.parentId) : null;
+  const status = String(item.status || (kind === 'kanban' ? 'backlog' : '')).slice(0,40);
+  const bodyText = String(item.body || '').slice(0,20000);
+  const priority = ['high','medium','low'].includes(String(item.priority)) ? String(item.priority) : 'medium';
+  const dueDate = item.dueDate ? String(item.dueDate).slice(0,10) : null;
+  const checked = item.checked ? 1 : 0;
+  const pinned = item.pinned ? 1 : 0;
+  const sortOrder = Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : 0;
+  await env.DB.prepare(`INSERT INTO workspace_items(id,kind,parent_id,status,title,body,priority,due_date,checked,pinned,sort_order,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,parent_id=excluded.parent_id,status=excluded.status,title=excluded.title,body=excluded.body,priority=excluded.priority,due_date=excluded.due_date,checked=excluded.checked,pinned=excluded.pinned,sort_order=excluded.sort_order,updated_at=CURRENT_TIMESTAMP`)
+    .bind(id,kind,parentId,status,title,bodyText,priority,dueDate,checked,pinned,sortOrder).run();
+  return json({ ok: true, id });
+}
+
+async function workspaceDelete(url, env) {
+  const id = decodeURIComponent(url.pathname.split('/').pop() || '');
+  if (!id) return json({ error: 'Не указан id' }, 400);
+  await env.DB.prepare('DELETE FROM workspace_items WHERE id=? OR parent_id=?').bind(id,id).run();
+  return json({ ok: true });
+}
+
+async function importYandexBusiness(request, env) {
+  const payload = await request.json();
+  const rows = Array.isArray(payload?.rows) ? payload.rows.slice(0,5000) : [];
+  const queries = Array.isArray(payload?.queries) ? payload.queries.slice(0,2000) : [];
+  if (!rows.length && !queries.length) return json({ error: 'В файле не удалось распознать статистику Яндекс Бизнеса.' }, 400);
+  if (payload?.replace !== false) {
+    if (rows.length) await env.DB.prepare('DELETE FROM yandex_business_daily').run();
+    if (queries.length) await env.DB.prepare('DELETE FROM yandex_business_queries').run();
+  }
+  for (const x of rows) {
+    const date = String(x.date || '').slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    await env.DB.prepare(`INSERT INTO yandex_business_daily(date,profile_views,target_clients,target_actions,routes,calls,website_clicks,direct_visits,discovery_visits,photo_views,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(date) DO UPDATE SET profile_views=excluded.profile_views,target_clients=excluded.target_clients,target_actions=excluded.target_actions,routes=excluded.routes,calls=excluded.calls,website_clicks=excluded.website_clicks,direct_visits=excluded.direct_visits,discovery_visits=excluded.discovery_visits,photo_views=excluded.photo_views,updated_at=CURRENT_TIMESTAMP`)
+      .bind(date,num(x.profileViews),num(x.targetClients),num(x.targetActions),num(x.routes),num(x.calls),num(x.websiteClicks),num(x.directVisits),num(x.discoveryVisits),num(x.photoViews)).run();
+  }
+  for (const x of queries) {
+    const query = String(x.query || '').trim().slice(0,500);
+    if (!query) continue;
+    await env.DB.prepare(`INSERT INTO yandex_business_queries(query,service,visits,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(query,service) DO UPDATE SET visits=excluded.visits,updated_at=CURRENT_TIMESTAMP`)
+      .bind(query,String(x.service || '').slice(0,120),num(x.visits)).run();
+  }
+  await logSync(env,'ybusiness','ok',`Яндекс Бизнес: ${rows.length} строк динамики, ${queries.length} поисковых запросов из Excel`);
+  return json({ ok:true, message:`Яндекс Бизнес импортирован: ${rows.length} строк динамики${queries.length?` и ${queries.length} запросов`:''}.` });
 }
 
 /* -------------------- IMPORTS -------------------- */
