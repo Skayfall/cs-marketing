@@ -5,14 +5,16 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#0f172a" />
   <title>CS Marketing by skayfall</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-  <link rel="stylesheet" href="/styles.css?v=2.0.0" />
+  <link rel="stylesheet" href="/styles.css?v=2.1.0" />
 </head>
 <body>
   <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
     <div class="auth-card">
-      <div class="auth-brand"><div class="auth-mark">CS</div><div><div class="auth-product">CS Marketing</div><div class="auth-byline">by skayfall</div></div></div>
-      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Сайт, SEO, реклама, VK, Telegram, MAX и email собраны в одном рабочем кабинете.</p></div>
+      <div class="auth-brand"><img class="auth-mark-img" src="/icon.svg" alt="" /><div><div class="auth-product">CS Marketing</div><div class="auth-byline">by skayfall</div></div></div>
+      <div class="auth-copy"><div class="eyebrow">Закрытый кабинет</div><h1 id="authTitle">Вход в маркетинговый центр</h1><p>Сайт, SEO, товары в поиске, реклама, соцсети, email и рабочие задачи — в одном кабинете.</p></div>
       <form class="auth-form" id="loginForm">
         <label>Логин<input class="input auth-input" id="loginInput" name="username" autocomplete="username" required /></label>
         <label>Пароль<input class="input auth-input" id="passwordInput" name="password" type="password" autocomplete="current-password" required /></label>
@@ -25,12 +27,13 @@
 
   <div class="app-shell" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><div class="brand-mark">CS</div><div><div class="brand-name">CS Marketing</div><div class="brand-sub">by skayfall</div></div></div>
+      <div class="brand"><img class="brand-mark-img" src="/icon.svg" alt="" /><div><div class="brand-name">CS Marketing</div><div class="brand-sub">by skayfall</div></div></div>
       <nav class="nav" aria-label="Основная навигация">
         <button class="nav-item active" data-view="overview"><span>⌂</span>Обзор</button>
         <button class="nav-item" data-view="site"><span>◫</span>Сайт</button>
         <button class="nav-item" data-view="business"><span>⌖</span>Яндекс Карты</button>
         <button class="nav-item" data-view="seo"><span>⌕</span>SEO</button>
+        <button class="nav-item" data-view="products"><span>◇</span>Товары в поиске</button>
         <button class="nav-item" data-view="ads"><span>↗</span>Реклама</button>
         <button class="nav-item" data-view="social"><span>◎</span>Соцсети</button>
         <button class="nav-item" data-view="email"><span>✉</span>Email</button>
@@ -58,6 +61,11 @@
 
       <section id="overview" class="view active">
         <article class="health-strip" id="healthStrip"></article>
+        <div class="command-row">
+          <article class="command-card command-primary"><div class="command-kicker">Сегодня</div><div id="todayFocus" class="command-focus">Загружаю состояние маркетинга…</div></article>
+          <article class="command-card"><span>Активных задач</span><strong id="overviewTaskCount">—</strong><small>в канбане и на этой неделе</small></article>
+          <article class="command-card"><span>Источники</span><strong id="overviewSourceCount">—</strong><small>с актуальными данными</small></article>
+        </div>
         <div class="metric-grid" id="overviewMetrics"></div>
         <div class="two-col wide-left">
           <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Яндекс Метрика</div><h3>Посещения и обращения</h3></div><div class="legend-inline"><span><i class="legend-dot traffic"></i>Визиты</span><span><i class="legend-dot users"></i>Посетители</span><span><i class="legend-dot conversion"></i>Заявки</span></div></div><div class="chart-wrap"><canvas id="overviewChart"></canvas></div></article>
@@ -72,6 +80,7 @@
           <article class="panel"><div class="panel-head"><div><div class="eyebrow">Фокус</div><h3>Что проверить первым</h3></div><span class="badge danger" id="issuesCount">0</span></div><div id="issueList" class="issue-list"></div></article>
         </div>
         <article class="panel maps-overview"><div class="panel-head"><div><div class="eyebrow">Яндекс Карты</div><h3>Локальная видимость компании</h3></div><button class="secondary-btn" id="openBusinessViewBtn">Подробнее</button></div><div id="businessOverview" class="maps-overview-grid"></div></article>
+        <article class="panel products-overview"><div class="panel-head"><div><div class="eyebrow">Яндекс Товары / поиск</div><h3>Товарные страницы: видимость → переход → действие</h3></div><button class="secondary-btn" id="openProductsViewBtn">Подробнее</button></div><div id="productsOverview" class="product-overview-grid"></div></article>
       </section>
 
       <section id="site" class="view">
@@ -118,6 +127,29 @@
           <article class="panel"><div class="panel-head"><div><div class="eyebrow">Возможности</div><h3>Что можно дожать быстрее всего</h3></div></div><div id="seoOpportunities" class="issue-list"></div></article>
         </div>
         <article class="panel"><div class="panel-head"><div><div class="eyebrow">Запросы</div><h3>Показы, клики, позиции и динамика</h3></div><input id="seoSearch" class="input compact" placeholder="Найти запрос…" /></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция показа</th><th>Позиция клика</th><th>Δ</th><th>Сигнал</th></tr></thead><tbody id="seoTable"></tbody></table></div></article>
+      </section>
+
+      <section id="products" class="view">
+        <article class="product-hero">
+          <div>
+            <div class="eyebrow">Яндекс Товары + Метрика + Вебмастер</div>
+            <h2>Товары в поиске</h2>
+            <p>Автоматически связывает видимость товарных URL в Яндексе с поведением на сайте. Показы, клики, CTR и позиции приходят из Вебмастера; визиты, отказы и цели — из Метрики.</p>
+          </div>
+          <div class="product-hero-actions">
+            <button class="secondary-btn" id="productsImportBtn">Импорт отчёта Яндекс Товаров</button>
+            <input type="file" id="productsFileInput" accept=".xlsx,.xls,.csv" hidden />
+            <a class="secondary-btn btn-link" href="https://merchants.yandex.ru/" target="_blank" rel="noopener">Открыть Яндекс Товары</a>
+          </div>
+        </article>
+        <div class="info-callout"><strong>Почему два источника?</strong><span>Раздел «Аналитика» Яндекс Товаров действительно использует Метрику для трафика и заказов. Но «Видимость в Поиске» — показы, клики, CTR, позиции и доля в выдачах — строится на данных Поиска. Поэтому CS Marketing автоматически берёт поисковые показатели по URL из Вебмастера. Точную «долю в выдачах» можно дополнить импортом XLSX из Яндекс Товаров.</span></div>
+        <div class="metric-grid" id="productsMetrics"></div>
+        <div class="two-col wide-left">
+          <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Видимость товарных URL</div><h3>Показы и клики по дням</h3></div></div><div class="chart-wrap"><canvas id="productsChart"></canvas></div></article>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Потенциал</div><h3>Что улучшить в первую очередь</h3></div></div><div id="productsRecommendations" class="issue-list"></div></article>
+        </div>
+        <article class="panel"><div class="panel-head"><div><div class="eyebrow">Карточки и товарные страницы</div><h3>Поиск → сайт → обращение</h3></div><div class="toolbar-inline"><input class="input compact" id="productSearch" placeholder="Найти URL или запрос" /><select class="select" id="productFilter"><option value="all">Все</option><option value="opportunity">Есть потенциал</option><option value="noclicks">Показы без кликов</option><option value="top10">ТОП-10</option></select></div></div><div class="table-scroll"><table><thead><tr><th>Страница</th><th>Популярный запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Визиты</th><th>Отказы</th><th>Цели</th><th>Сигнал</th></tr></thead><tbody id="productsTable"></tbody></table></div></article>
+        <article class="panel" id="productsImportedPanel"><div class="panel-head"><div><div class="eyebrow">Точный отчёт Яндекс Товаров</div><h3>Доля в выдачах и число запросов</h3></div><span class="badge" id="productsImportStatus">Не импортирован</span></div><div class="table-scroll compact-table"><table><thead><tr><th>Страница</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Средняя позиция</th><th>Доля в выдачах</th><th>Запросы</th></tr></thead><tbody id="productsImportedTable"></tbody></table></div></article>
       </section>
 
       <section id="ads" class="view">
@@ -180,9 +212,9 @@
 
       <section id="reports" class="view">
         <div class="report-builder">
-          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Понятный отчёт руководителю</h3></div></div>
+          <article class="panel"><div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Сводный маркетинговый отчёт</h3></div></div>
             <div class="form-grid"><label>Название<input class="input" id="reportName" value="Маркетинговый отчёт ПТГ «Центр Сантехники»" /></label><label>Период<select class="select" id="reportPeriod"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></label></div>
-            <div class="check-grid"><label><input type="checkbox" checked value="summary" class="reportCheck" /> Резюме</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="business" class="reportCheck" /> Яндекс Карты</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> Соцсети</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="plan" class="reportCheck" /> План действий</label></div>
+            <div class="check-grid"><label><input type="checkbox" checked value="summary" class="reportCheck" /> Резюме</label><label><input type="checkbox" checked value="site" class="reportCheck" /> Сайт</label><label><input type="checkbox" checked value="business" class="reportCheck" /> Яндекс Карты</label><label><input type="checkbox" checked value="seo" class="reportCheck" /> SEO</label><label><input type="checkbox" checked value="products" class="reportCheck" /> Товары в поиске</label><label><input type="checkbox" checked value="ads" class="reportCheck" /> Реклама</label><label><input type="checkbox" checked value="social" class="reportCheck" /> Соцсети</label><label><input type="checkbox" checked value="email" class="reportCheck" /> Email</label><label><input type="checkbox" checked value="plan" class="reportCheck" /> План действий</label></div>
             <div class="button-row"><button class="primary-btn" id="generateReportBtn">Скачать PDF</button><button class="secondary-btn" id="downloadCommentBtn">Скачать комментарий .txt</button><button class="secondary-btn" id="downloadCsvBtn">CSV</button><button class="secondary-btn" id="downloadJsonBtn">JSON</button></div>
           </article>
           <article class="panel"><div class="eyebrow">Предпросмотр</div><div id="reportPreview" class="report-preview rich-preview"></div></article>
@@ -191,7 +223,7 @@
       </section>
 
       <section id="integrations" class="view">
-        <article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Конфигурация объединяет Яндекс, VK Рекламу, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. При каждом «Обновить данные» приложение заново проверяет ваши публичные каналы и обновляет ленту публикаций.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
+        <article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Конфигурация объединяет Метрику, Вебмастер, Яндекс Товары, Директ, VK Рекламу, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. При каждом «Обновить данные» приложение заново проверяет ваши публичные каналы и обновляет ленту публикаций.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
         <div class="integration-grid" id="integrationGrid"></div>
         <article class="panel"><div class="panel-head"><div><div class="eyebrow">Runtime variables & secrets</div><h3>Проверка конфигурации</h3></div></div><div id="runtimeSummary" class="runtime-summary"></div><div class="table-scroll"><table><thead><tr><th>Параметр</th><th>Тип</th><th>Статус</th><th>Используется для</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
         <article class="panel"><div class="panel-head"><div><div class="eyebrow">Журнал</div><h3>Последние синхронизации</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Когда</th><th>Статус</th><th>Комментарий</th></tr></thead><tbody id="syncLogTable"></tbody></table></div></article>
@@ -208,6 +240,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
-  <script src="/app.js?v=2.0.0"></script>
+  <script src="/app.js?v=2.1.0"></script>
 </body>
 </html>
