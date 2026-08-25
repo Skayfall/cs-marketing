@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.5 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
+// CS Marketing by skayfall v2.6 — VK service/client token support + server-first marketing OS
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -258,8 +258,8 @@ async function status(env) {
         !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_SECRET && 'VK_ADS_CLIENT_SECRET'
       ].filter(Boolean), 'api',
       { partial: vkAdsPartial, note: vkAdsPartial ? 'VK_ADS_CLIENT_SECRET уже есть; нужен только VK_ADS_CLIENT_ID как обычная Variable.' : null }),
-    vksocial: item('vksocial', vkSocialReady, [], (env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'api+public' : 'public-web',
-      { note: (env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'Для чтения постов используется отдельная авторизация VK; токен сообщества остаётся только для доступной статистики сообщества.' : `Публичная страница ${env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk} часто не отдаёт стену серверным запросам. Для надёжной ленты добавьте VK_SERVICE_TOKEN либо VK_APP_ID + VK_APP_SECRET.` }),
+    vksocial: item('vksocial', vkSocialReady, [], (env.VK_SERVICE_TOKEN || env.VK_CLIENT_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'api+public' : 'public-web',
+      { note: (env.VK_SERVICE_TOKEN || env.VK_CLIENT_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'Посты читаются отдельным read-токеном VK через wall.get. VK_COMMUNITY_TOKEN используется только для методов, где разрешена group authorization.' : `Публичная страница ${env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk} часто не отдаёт стену серверным запросам. Для надёжной ленты добавьте VK_SERVICE_TOKEN (или VK_CLIENT_TOKEN / VK_USER_TOKEN).` }),
     telegram: item('telegram', telegramReady, [], 'public-web',
       { note: `Посты и просмотры проверяются по публичной web-ленте ${env.TELEGRAM_CHANNEL_URL || DEFAULT_SOCIAL_URLS.telegram}.` }),
     maxsocial: item('maxsocial', maxReady, [], env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID ? 'api' : 'public-web',
@@ -284,6 +284,7 @@ async function status(env) {
     VK_ADS_TOKEN: Boolean(env.VK_ADS_TOKEN),
     VK_COMMUNITY_TOKEN: Boolean(env.VK_COMMUNITY_TOKEN),
     VK_SERVICE_TOKEN: Boolean(env.VK_SERVICE_TOKEN),
+    VK_CLIENT_TOKEN: Boolean(env.VK_CLIENT_TOKEN),
     VK_APP_ID: Boolean(env.VK_APP_ID),
     VK_APP_SECRET: Boolean(env.VK_APP_SECRET),
     VK_USER_TOKEN: Boolean(env.VK_USER_TOKEN),
@@ -1029,27 +1030,74 @@ async function getVkAppToken(env) {
   return String(data?.access_token||'').trim();
 }
 
+async function getVkReadCredential(env) {
+  const direct = [
+    ['VK_SERVICE_TOKEN', env.VK_SERVICE_TOKEN],
+    ['VK_CLIENT_TOKEN', env.VK_CLIENT_TOKEN],
+    ['VK_USER_TOKEN', env.VK_USER_TOKEN]
+  ];
+  for (const [source, value] of direct) {
+    const token = String(value || '').trim();
+    if (token) return { token, source };
+  }
+  if (env.VK_APP_ID && env.VK_APP_SECRET) {
+    const token = await getVkAppToken(env).catch(() => '');
+    if (token) return { token, source: 'VK_APP_ID + VK_APP_SECRET' };
+  }
+  return { token: '', source: '' };
+}
+
+function explainVkReadError(err) {
+  const text = String(err?.message || err || '');
+  if (/Group authorization failed|group auth|method is unavailable with group/i.test(text)) {
+    return 'VK распознал переданный ключ как токен сообщества. Для wall.get нужен сервисный/клиентский либо пользовательский read-токен; VK_COMMUNITY_TOKEN здесь использовать нельзя.';
+  }
+  if (/User authorization failed|invalid access_token|access token|authorization failed|error 5/i.test(text)) {
+    return `VK отклонил read-токен: ${text}`;
+  }
+  return `VK API для постов недоступен: ${text}`;
+}
+
 async function syncVkCommunity(env) {
   const communityToken = String(env.VK_COMMUNITY_TOKEN || '').trim();
-  const readToken = String(env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || '').trim() || await getVkAppToken(env).catch(()=> '');
-  const group = await resolveVkCommunityHybrid(env, communityToken);
+  const readCredential = await getVkReadCredential(env);
+  const readToken = readCredential.token;
+  // Сообщество определяем read-токеном в первую очередь: сервисный токен умеет читать публичную группу,
+  // а токен сообщества оставляем только как запасной вариант для идентификации и stats.get.
+  const group = await resolveVkCommunityHybrid(env, readToken || communityToken);
   const groupId = group?.id ? String(group.id) : '';
-  const groupName = String(group?.name || group?.screen_name || 'VK-сообщество');
+  const groupScreen = String(group?.screen_name || vkScreenNameFromUrl(env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk) || '').trim();
+  const groupName = String(group?.name || groupScreen || 'VK-сообщество');
   if (groupId) await saveResolved(env, 'vksocial', groupId, groupName);
 
   // ВАЖНО: wall.get не вызывается с VK_COMMUNITY_TOKEN (group auth).
-  // Посты читаем либо отдельным service/user token, либо best-effort с публичной страницы.
+  // Читаем стену read-токеном. Если ID группы не удалось определить, используем domain.
   let posts = [];
   let postsSource = 'none';
   let postsNote = '';
-  if (!readToken) postsNote = 'Для wall.get не подходит токен сообщества. Добавьте VK_SERVICE_TOKEN либо VK_APP_ID + VK_APP_SECRET (или VK_USER_TOKEN); иначе остаётся только нестабильное чтение публичной HTML-страницы.';
-  if (readToken && groupId) {
+  if (!readToken) postsNote = 'Read-токен VK не найден. Добавьте VK_SERVICE_TOKEN (поддерживается также VK_CLIENT_TOKEN или VK_USER_TOKEN). Публичный HTML остаётся только резервным источником.';
+  if (readToken && (groupId || groupScreen)) {
     try {
-      const wall = await vkApi('wall.get', { owner_id: `-${groupId}`, count: 100, filter: 'owner', extended: 0 }, readToken);
-      posts = normalizeVkApiPosts(wall, groupId, group?.members_count);
-      postsSource = 'vk-api';
+      const params = groupId
+        ? { owner_id: `-${groupId}`, count: 100, filter: 'owner', extended: 0 }
+        : { domain: groupScreen, count: 100, filter: 'owner', extended: 0 };
+      const wall = await vkApi('wall.get', params, readToken);
+      posts = normalizeVkApiPosts(wall, { groupId, screen: groupScreen, followers: group?.members_count });
+      postsSource = `vk-api:${readCredential.source || 'read-token'}`;
     } catch (err) {
-      postsNote = `VK API для постов недоступен: ${err?.message || err}`;
+      // Иногда groups.getById режется конкретным типом токена, а wall.get по domain работает.
+      // Поэтому при наличии screen-name пробуем один дополнительный запрос именно по domain.
+      if (groupScreen && groupId) {
+        try {
+          const wall = await vkApi('wall.get', { domain: groupScreen, count: 100, filter: 'owner', extended: 0 }, readToken);
+          posts = normalizeVkApiPosts(wall, { groupId, screen: groupScreen, followers: group?.members_count });
+          postsSource = `vk-api:${readCredential.source || 'read-token'}`;
+        } catch (err2) {
+          postsNote = explainVkReadError(err2);
+        }
+      } else {
+        postsNote = explainVkReadError(err);
+      }
     }
   }
 
@@ -1118,7 +1166,7 @@ async function syncVkCommunity(env) {
   }
 
   const parts = [];
-  if (posts.length) parts.push(`${posts.length} постов (${postsSource === 'vk-api' ? 'VK API' : 'публичная страница'})`);
+  if (posts.length) parts.push(`${posts.length} постов (${postsSource.startsWith('vk-api') ? `VK API · ${postsSource.split(':')[1] || 'read-token'}` : 'публичная страница'})`);
   else parts.push('посты не загружены');
   if (statsRows) parts.push(`${statsRows} дней статистики сообщества`);
   const details = [postsNote, statsNote].filter(Boolean).join(' ');
@@ -1128,8 +1176,11 @@ async function syncVkCommunity(env) {
   return { message };
 }
 
-function normalizeVkApiPosts(wall, groupId, followers = 0) {
+function normalizeVkApiPosts(wall, ref = {}) {
   const items = Array.isArray(wall?.items) ? wall.items : [];
+  const groupId = String(ref?.groupId || '').replace(/^-/,'');
+  const screen = String(ref?.screen || '').trim();
+  const followers = num(ref?.followers);
   return items.map(post => {
     const d = new Date(num(post?.date) * 1000);
     if (Number.isNaN(d.getTime())) return null;
@@ -1137,9 +1188,13 @@ function normalizeVkApiPosts(wall, groupId, followers = 0) {
     const title = text ? text.slice(0, 140) : `Пост VK ${post?.id || post?.date}`;
     const attachments = Array.isArray(post?.attachments) ? post.attachments : [];
     const mediaType = attachments.some(a=>a?.type==='video') ? 'video' : attachments.some(a=>a?.type==='photo') ? 'image' : attachments.some(a=>a?.type==='poll') ? 'poll' : 'text';
+    const ownerId = String(Math.abs(num(post?.owner_id || groupId)) || groupId || '');
+    const postUrl = ownerId
+      ? `https://vk.com/wall-${ownerId}_${post?.id}`
+      : (screen ? `https://vk.com/${screen}?w=wall-${screen}_${post?.id}` : 'https://vk.com/');
     return {
       title, date: dateOnly(d), reach: 0, views: num(post?.views?.count), reactions: num(post?.likes?.count), comments: num(post?.comments?.count), shares: num(post?.reposts?.count), clicks: 0,
-      followers: num(followers), followersDelta: 0, postId: String(post?.id || ''), postUrl: `https://vk.com/wall-${groupId}_${post?.id}`, mediaType, textLength: text.length
+      followers, followersDelta: 0, postId: String(post?.id || ''), postUrl, mediaType, textLength: text.length
     };
   }).filter(Boolean);
 }
@@ -1150,21 +1205,15 @@ async function resolveVkCommunityHybrid(env, token) {
   const screenFromUrl = vkScreenNameFromUrl(explicitUrl);
 
   if (token) {
-    if (explicitId) {
-      const response = await vkApi('groups.getById', { group_ids: explicitId, fields: 'members_count,screen_name' }, token).catch(() => null);
+    const candidates = [explicitId, screenFromUrl].filter(Boolean);
+    for (const candidate of candidates) {
+      const response = await vkApi('groups.getById', { group_ids: candidate, fields: 'members_count,screen_name' }, token).catch(() => null);
       const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
       if (items[0]?.id) return items[0];
     }
-    if (screenFromUrl) {
-      const response = await vkApi('groups.getById', { group_ids: screenFromUrl, fields: 'members_count,screen_name' }, token).catch(() => null);
-      const items = Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : [];
-      if (items[0]?.id) return items[0];
-    }
-    const auto = await vkApi('groups.getById', { fields: 'members_count,screen_name' }, token).catch(() => null);
-    const autoItems = Array.isArray(auto?.groups) ? auto.groups : Array.isArray(auto) ? auto : [];
-    if (autoItems.length === 1 && autoItems[0]?.id) return autoItems[0];
   }
 
+  // Даже если groups.getById не прошёл, screen-name из публичного URL достаточно для wall.get?domain=...
   if (explicitId || screenFromUrl) return { id: explicitId || null, name: screenFromUrl || `VK ${explicitId}`, screen_name: screenFromUrl || '' };
   throw new Error('Не удалось определить VK-сообщество. Добавьте VK_GROUP_ID или VK_COMMUNITY_URL. Это не влияет на VK Рекламу.');
 }
