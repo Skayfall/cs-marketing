@@ -10,7 +10,7 @@
 <link href="/icon-192.png" rel="apple-touch-icon"/>
 <link href="/manifest.webmanifest" rel="manifest"/>
 <link href="https://cdn.jsdelivr.net" rel="preconnect"/>
-<link href="/styles.css?v=2.4.0" rel="stylesheet"/>
+<link href="/styles.css?v=2.5.0" rel="stylesheet"/>
 </head>
 <body>
 <section aria-labelledby="authTitle" class="auth-screen" id="authScreen">
@@ -42,7 +42,7 @@
 <button class="nav-item" data-view="reports"><span class="nav-glyph">⇩</span><span>Отчёты</span></button>
 <button class="nav-item" data-view="integrations"><span class="nav-glyph">⚙</span><span>Интеграции</span></button>
 </nav>
-<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.4 · рабочий центр</div>
+<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.5 · рабочий центр</div>
 <div class="sync-pill"><span class="dot" id="syncDot"></span><span id="syncText">Проверяю источники…</span></div>
 <div class="account-row"><span class="account-avatar">A</span><div><strong id="accountName">admin</strong><span>доступ к кабинету</span></div></div>
 <button class="ghost-btn full logout-btn" id="logoutBtn">Выйти</button>
@@ -149,6 +149,10 @@
 <section class="view" id="social">
 <div class="metric-grid" id="socialMetrics"></div>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Каналы</div><h3>VK, Telegram, MAX и Дзен в одном сравнении</h3></div><span class="muted">Сырые просмотры между площадками сравниваются осторожно: приложение дополнительно считает результат относительно обычного уровня каждого канала.</span></div><div class="compare-grid social-compare" id="socialChannelCompare"></div></article>
+<article class="social-source-note" id="socialSourceNote">
+  <div><span class="section-kicker">Откуда берутся данные</span><strong>Публичные страницы и официальные API — это разные уровни доступа</strong></div>
+  <p>Telegram отдаёт публикации в публичном preview. VK и MAX часто возвращают серверу только оболочку страницы или требуют другой тип авторизации. CS Marketing не подставляет нули вместо недоступной ленты: в карточке канала показывается конкретная причина и способ получить надёжные данные.</p>
+</article>
 <div class="two-col wide-left">
 <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика контента</div><h3>Просмотры публикаций по площадкам</h3></div></div><div class="chart-wrap"><canvas id="socialDailyChart"></canvas></div></article>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий приложения</div><h3>Что происходит с контентом</h3></div></div><div class="issue-list" id="contentInsights"></div></article>
@@ -224,6 +228,6 @@
 <div class="report-canvas" id="reportCanvas"></div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
-<script src="/app.js?v=2.4.0"></script>
+<script src="/app.js?v=2.5.0"></script>
 </body>
 </html>
