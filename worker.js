@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.3 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
+// CS Marketing by skayfall v2.4 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -40,6 +40,7 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'GET' && url.pathname === '/api/range') return rangeAnalytics(url, env);
   if (request.method === 'GET' && url.pathname === '/api/workspace') return workspaceData(env);
   if (request.method === 'GET' && url.pathname === '/api/settings') return appSettingsGet(env);
+  if (request.method === 'GET' && url.pathname === '/api/ybusiness/candidates') return ybusinessCandidatesResponse(env);
   if (request.method === 'POST' && url.pathname === '/api/settings') return appSettingsSave(request, env);
   if (request.method === 'POST' && url.pathname === '/api/workspace/upsert') return workspaceUpsert(request, env);
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/workspace/item/')) return workspaceDelete(url, env);
@@ -350,7 +351,7 @@ async function dashboard(env) {
     site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
     seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
     adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog,
-    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
+    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping, ybusinessCounterId: settings.ybusiness_profile_url ? (settings.ybusiness_counter_id || resolved.ybusiness?.externalId || null) : null, ybusinessProfileUrl: settings.ybusiness_profile_url || 'https://yandex.ru/sprav/173574593150/' }
   });
 }
 
@@ -360,8 +361,10 @@ async function rangeAnalytics(url, env) {
   const result = { from, to, days, metrika: null, webmaster: null, warnings: [] };
 
   if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) {
-    try { result.metrika = await metrikaRangeData(env, from, to); }
-    catch (err) { result.warnings.push(`Метрика: ${err?.message || err}`); }
+    try {
+      result.metrika = await metrikaRangeData(env, from, to);
+      if (Array.isArray(result.metrika?.warnings)) result.warnings.push(...result.metrika.warnings.map(x => `Метрика: ${x}`));
+    } catch (err) { result.warnings.push(`Метрика: ${err?.message || err}`); }
   } else result.warnings.push('Метрика: нет YANDEX_TOKEN или SITE_URL/METRIKA_COUNTER_ID');
 
   if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) {
@@ -398,7 +401,14 @@ async function metrikaRangeData(env, from, to) {
     ['searchPhrases', { dimensions:'ym:s:lastSignSearchEngineRootName,ym:s:lastSignSearchPhrase', metrics:'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds', sort:'-ym:s:visits', limit:'250' }]
   ];
   const settled = await Promise.allSettled(defs.map(([,params]) => apiGet(withParams(base, { ...common, ...params }), headers)));
-  const raw = Object.fromEntries(defs.map(([name],i) => [name, settled[i].status === 'fulfilled' ? settled[i].value : { data: [] }]));
+  const labels = { sources:'источники', pages:'страницы входа', devices:'устройства', regions:'регионы', searchEngines:'поисковики', utm:'UTM', searchPhrases:'поисковые фразы' };
+  const warnings = [];
+  const raw = Object.fromEntries(defs.map(([name],i) => {
+    if (settled[i].status === 'fulfilled') return [name, settled[i].value];
+    const reason = settled[i].reason?.message || String(settled[i].reason || 'ошибка запроса');
+    warnings.push(`${labels[name] || name}: ${reason}`);
+    return [name, { data: [] }];
+  }));
 
   const sources = (raw.sources.data || []).map(r => { const m=r.metrics||[]; return { name:dimensionName(r.dimensions?.[0])||'Прочее', visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), conversions:num(m[3]) }; });
   const pages = (raw.pages.data || []).map(r => { const m=r.metrics||[], page=dimensionName(r.dimensions?.[0])||''; return { page, title:page, visits:num(m[0]), users:num(m[1]), bounce:num(m[2]), depth:num(m[3]), duration:num(m[4]), conversions:num(m[5]) }; }).filter(x=>x.page);
@@ -416,7 +426,7 @@ async function metrikaRangeData(env, from, to) {
     const report=await apiGet(withParams(base,{...common,metrics}),headers).catch(()=>({totals:[]}));
     group.forEach((g,i)=>{const reaches=num(report.totals?.[i]);goals.push({goalId:String(g.id),name:String(g.name||`Цель ${g.id}`),type:String(g.type||''),category:g.category||'other',reaches,visits:totalVisits,conversionRate:totalVisits?reaches/totalVisits*100:0});});
   }
-  return { counterId, sources, pages, devices:simple('devices'), regions:simple('regions'), searchEngines:simple('searchEngines'), utm, searchPhrases, goals };
+  return { counterId, sources, pages, devices:simple('devices'), regions:simple('regions'), searchEngines:simple('searchEngines'), utm, searchPhrases, goals, warnings };
 }
 
 async function webmasterRangeData(env, from, to) {
@@ -552,9 +562,10 @@ async function syncMetrika(env) {
     await env.DB.prepare(`INSERT INTO landing_pages(period_key,page,title,visits,users,bounce,depth,duration,conversions,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       .bind(periodKey,page,page,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])).run();
   }
-  await replaceSimpleDimension(env, 'device_stats', periodKey, deviceRes.data || []);
-  await replaceSimpleDimension(env, 'region_stats', periodKey, regionRes.data || []);
-  await replaceSimpleDimension(env, 'search_engines', periodKey, engineRes.data || []);
+  // Частичный сбой одного среза Метрики не должен стирать последний успешный результат из D1.
+  if ((deviceRes.data || []).length) await replaceSimpleDimension(env, 'device_stats', periodKey, deviceRes.data || []);
+  if ((regionRes.data || []).length) await replaceSimpleDimension(env, 'region_stats', periodKey, regionRes.data || []);
+  if ((engineRes.data || []).length) await replaceSimpleDimension(env, 'search_engines', periodKey, engineRes.data || []);
 
   await env.DB.prepare('DELETE FROM utm_stats WHERE period_key=?').bind(periodKey).run();
   for (const row of utmRes.data || []) {
@@ -771,20 +782,27 @@ async function syncDirect(env) {
       .bind(String(c.Id),String(c.Name || `Кампания ${c.Id}`),directStateRu(c.State),String(c.State || c.Status || '')).run();
   }
 
-  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 364);
+  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 179);
+  const dateFrom=dateOnly(start),dateTo=dateOnly(end);
   const reportBody = { params: {
-    SelectionCriteria: { DateFrom: dateOnly(start), DateTo: dateOnly(end) },
+    SelectionCriteria: { DateFrom: dateFrom, DateTo: dateTo },
     FieldNames: ['Date','CampaignId','CampaignName','Impressions','Clicks','Ctr','Cost','AvgCpc','Conversions','ConversionRate','CostPerConversion','BounceRate','AvgPageviews'],
-    ReportName: `CS Marketing ${Date.now()}`,
+    ReportName: `CSMarketing-CampaignPerformance-${dateFrom}-${dateTo}`,
     ReportType: 'CAMPAIGN_PERFORMANCE_REPORT', DateRangeType: 'CUSTOM_DATE', Format: 'TSV', IncludeVAT: 'YES', IncludeDiscount: 'YES'
   }};
-  const reportHeaders = { ...headers, 'returnMoneyInMicros': 'false' };
-  const res = await fetch('https://api.direct.yandex.com/json/v501/reports', { method:'POST', headers: reportHeaders, body: JSON.stringify(reportBody) });
-  if (res.status === 201 || res.status === 202) {
-    await logSync(env,'direct','pending',`Статусы ${campaigns.length} кампаний обновлены, отчёт формируется`);
-    return { message: `Статусы ${campaigns.length} кампаний обновлены. Статистика Директа ещё формируется — повторите синхронизацию позже.` };
+  const reportHeaders = { ...headers, 'returnMoneyInMicros': 'false', 'processingMode':'auto', 'skipReportHeader':'true', 'skipReportSummary':'true' };
+  let res=null;
+  for(let attempt=0;attempt<4;attempt++){
+    res=await fetch('https://api.direct.yandex.com/json/v501/reports',{method:'POST',headers:reportHeaders,body:JSON.stringify(reportBody)});
+    if(res.status!==201&&res.status!==202) break;
+    const retryIn=Math.max(1,Number(res.headers.get('retryIn')||60));
+    if(retryIn>4||attempt===3){
+      await logSync(env,'direct','pending',`Директ: ${campaigns.length} кампаний найдены. Офлайн-отчёт формируется, повтор через ${retryIn} с.`);
+      return {message:`Яндекс Директ подключён: ${campaigns.length} кампаний и их статусы уже получены. Статистический отчёт поставлен в очередь; при следующем обновлении приложение повторит ТОТ ЖЕ запрос и заберёт готовый отчёт автоматически.`,pending:true,campaigns:campaigns.length,retryIn};
+    }
+    await new Promise(r=>setTimeout(r,retryIn*1000));
   }
-  if (!res.ok) { const detail=(await res.text()).slice(0,500); if([401,403].includes(res.status)) return syncDirectFromMetrika(env, `Direct Reports API ${res.status}`); throw new Error(`Direct Reports API ${res.status}: ${detail}`); }
+  if (!res?.ok) { const detail=(await res.text()).slice(0,500); if([401,403].includes(res.status)) return syncDirectFromMetrika(env, `Direct Reports API ${res.status}`); throw new Error(`Direct Reports API ${res.status}: ${detail}`); }
   const rows = parseDirectTsv(await res.text());
   await env.DB.prepare(`DELETE FROM ad_campaign_daily WHERE channel='Яндекс Директ'`).run();
   const metaById = new Map(campaigns.map(c => [String(c.Id), c]));
@@ -1585,7 +1603,7 @@ async function appSettingsGet(env) {
 }
 async function appSettingsSave(request, env) {
   const body = await request.json().catch(()=>({}));
-  const allowed = new Set(['primary_form_goal_id','primary_email_goal_id']);
+  const allowed = new Set(['primary_form_goal_id','primary_email_goal_id','ybusiness_counter_id','ybusiness_profile_url']);
   const changed = [];
   for (const [key,value] of Object.entries(body?.settings || body || {})) {
     if (!allowed.has(key)) continue;
@@ -1595,6 +1613,38 @@ async function appSettingsSave(request, env) {
   return json({ ok:true, changed, settings:await getAppSettings(env) });
 }
 
+
+async function ybusinessCandidatesResponse(env) {
+  if (!env.YANDEX_TOKEN) return json({ error:'Добавьте YANDEX_TOKEN' },400);
+  const headers={Authorization:`OAuth ${env.YANDEX_TOKEN}`};
+  const candidates=await listYandexBusinessCandidates(env,headers);
+  const settings=await getAppSettings(env);
+  return json({
+    candidates,
+    selectedCounterId:String(settings.ybusiness_counter_id||''),
+    profileUrl:String(settings.ybusiness_profile_url||'https://yandex.ru/sprav/173574593150/')
+  });
+}
+
+async function listYandexBusinessCandidates(env, headers) {
+  const list=await apiGet(withParams('https://api-metrika.yandex.net/management/v1/counters',{per_page:1000}),headers);
+  const counters=Array.isArray(list?.counters)?list.counters:[];
+  const out=[];
+  for (const batch of chunks(counters,8)) {
+    const rows=await Promise.all(batch.map(async c=>{
+      const data=await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(c.id)}/goals`,headers).catch(()=>null);
+      const goals=(data?.goals||[]).filter(g=>g?.status!=='DELETED');
+      const matched=goals.filter(g=>ybGoalKind(g));
+      if(!matched.length) return null;
+      const name=String(c.name||c.site||`Счётчик ${c.id}`);
+      const site=String(c.site||'');
+      const score=matched.length + (/бизнес|карты|организац|справочник/i.test(name)?4:0) + (normalizeHost(site)===normalizeHost(env.SITE_URL)?1:0);
+      return {id:String(c.id),name,site,score,matchedGoals:matched.map(g=>({id:String(g.id),name:String(g.name||''),kind:ybGoalKind(g)}))};
+    }));
+    out.push(...rows.filter(Boolean));
+  }
+  return out.sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'ru'));
+}
 
 /* -------------------- YANDEX BUSINESS / MAPS -------------------- */
 
@@ -1614,31 +1664,37 @@ function ybGoalKind(goal) {
 }
 
 async function resolveYandexBusinessCounter(env, headers) {
-  const cached = await env.DB.prepare(`SELECT external_id AS id,label FROM resolved_integrations WHERE source='ybusiness' LIMIT 1`).first().catch(()=>null);
+  const settings=await getAppSettings(env);
+  const selected=String(settings.ybusiness_counter_id||'').trim();
+  const candidates=await listYandexBusinessCandidates(env,headers);
   const testCounter = async id => {
-    if (!id) return null;
-    const data = await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(id)}/goals`, headers).catch(()=>null);
-    const goals = (data?.goals || []).filter(g=>g?.status!=='DELETED');
-    const matched = goals.filter(g=>ybGoalKind(g));
-    return matched.length >= 3 ? { id:String(id), goals, score:matched.length } : null;
+    const candidate=candidates.find(x=>String(x.id)===String(id));
+    if(candidate){
+      const data=await apiGet(`https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(id)}/goals`,headers).catch(()=>null);
+      return {...candidate,goals:(data?.goals||[]).filter(g=>g?.status!=='DELETED')};
+    }
+    return null;
   };
-  const cachedMatch = await testCounter(cached?.id);
-  if (cachedMatch) return { ...cachedMatch, name:cached?.label || `Яндекс Бизнес ${cachedMatch.id}` };
-
-  const list = await apiGet(withParams('https://api-metrika.yandex.net/management/v1/counters', { per_page:1000 }), headers);
-  const counters = Array.isArray(list?.counters) ? list.counters : [];
-  let best = null;
-  for (const batch of chunks(counters, 8)) {
-    const tested = await Promise.all(batch.map(async c => {
-      const r = await testCounter(c.id);
-      return r ? { ...r, name:String(c.name || c.site || `Счётчик ${c.id}`) } : null;
-    }));
-    for (const r of tested.filter(Boolean)) if (!best || r.score > best.score) best = r;
-    if (best?.score >= 6) break;
+  if(selected){
+    if(!String(settings.ybusiness_profile_url||'').trim()){
+      throw new Error('Старая автоматическая привязка Яндекс Бизнеса отключена, чтобы не показывать данные чужого/другого профиля. Откройте «Яндекс Карты → Настроить профиль» и один раз выберите правильный счётчик для карточки 173574593150.');
+    }
+    const exact=await testCounter(selected);
+    if(!exact) throw new Error(`Выбранный счётчик Яндекс Бизнеса ${selected} больше недоступен или не содержит целей профиля. Откройте «Яндекс Карты → Настроить профиль» и выберите нужный счётчик заново.`);
+    await saveResolved(env,'ybusiness',exact.id,exact.name);
+    return exact;
   }
-  if (!best) throw new Error('Не найден автоматический счётчик Яндекс Бизнеса в Метрике. Проверьте, что у этого Яндекс ID есть доступ к профилю компании в Яндекс Бизнесе.');
-  await saveResolved(env,'ybusiness',best.id,best.name);
-  return best;
+  if(candidates.length===1){
+    const exact=await testCounter(candidates[0].id);
+    await setAppSetting(env,'ybusiness_counter_id',String(exact.id));
+    await saveResolved(env,'ybusiness',exact.id,exact.name);
+    return exact;
+  }
+  if(candidates.length>1){
+    const preview=candidates.slice(0,6).map(x=>`${x.id}: ${x.name}`).join('; ');
+    throw new Error(`Найдено несколько счётчиков Яндекс Бизнеса, поэтому приложение больше не выбирает профиль автоматически. Выберите правильный профиль в разделе «Яндекс Карты». Кандидаты: ${preview}`);
+  }
+  throw new Error('Не найден счётчик Яндекс Бизнеса в Метрике. Проверьте доступ этого Яндекс ID к профилю компании.');
 }
 
 async function syncYandexBusiness(env) {
