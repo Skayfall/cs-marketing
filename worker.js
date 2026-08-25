@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.0 — marketing OS: analytics + Yandex Business + workspace
+// CS Marketing by skayfall v2.1 — marketing OS: analytics + product search + Yandex Business + workspace
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -41,6 +41,7 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'POST' && url.pathname === '/api/workspace/upsert') return workspaceUpsert(request, env);
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/workspace/item/')) return workspaceDelete(url, env);
   if (request.method === 'POST' && url.pathname === '/api/ybusiness/import') return importYandexBusiness(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/yproducts/import') return importYandexProducts(request, env);
   if (request.method === 'POST' && url.pathname === '/api/sync/all') return json(await syncConfigured(env), 200);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
   const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
@@ -181,6 +182,8 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS search_phrases (period_key TEXT NOT NULL, engine TEXT NOT NULL, phrase TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, PRIMARY KEY(period_key,engine,phrase))`,
       `CREATE TABLE IF NOT EXISTS yandex_business_daily (date TEXT PRIMARY KEY, profile_views REAL DEFAULT 0, target_clients REAL DEFAULT 0, target_actions REAL DEFAULT 0, routes REAL DEFAULT 0, calls REAL DEFAULT 0, website_clicks REAL DEFAULT 0, direct_visits REAL DEFAULT 0, discovery_visits REAL DEFAULT 0, photo_views REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS yandex_business_queries (query TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', visits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(query,service))`,
+      `CREATE TABLE IF NOT EXISTS product_search_daily (url TEXT NOT NULL, date TEXT NOT NULL, popular_query TEXT, impressions REAL DEFAULT 0, clicks REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, demand REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(url,date))`,
+      `CREATE TABLE IF NOT EXISTS yandex_products_import (url TEXT PRIMARY KEY, impressions REAL DEFAULT 0, clicks REAL DEFAULT 0, ctr REAL DEFAULT 0, avg_position REAL DEFAULT 0, share_in_serp REAL DEFAULT 0, queries_count REAL DEFAULT 0, imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS workspace_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT, status TEXT, title TEXT NOT NULL, body TEXT, priority TEXT DEFAULT 'medium', due_date TEXT, checked INTEGER DEFAULT 0, pinned INTEGER DEFAULT 0, sort_order INTEGER DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS integration_cache (cache_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, expires_at INTEGER DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
     ];
@@ -245,6 +248,9 @@ async function status(env) {
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean)),
     webmaster: item('webmaster', yandexBase && webmasterTarget,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID'].filter(Boolean)),
+    yproducts: item('webmaster', yandexBase && webmasterTarget && metrikaTarget,
+      [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean), 'derived',
+      { note: 'Товарная аналитика строится автоматически из Вебмастера (видимость URL) + Метрики (поведение после перехода). Точная «доля в выдачах» дополняется импортом XLSX из Яндекс Товаров.' }),
     direct: item('direct', yandexBase,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN'].filter(Boolean), 'api',
       { note: yandexBase ? 'Используется тот же YANDEX_TOKEN. До одобрения заявки Direct API синхронизация может возвращать ошибку доступа.' : null }),
@@ -306,11 +312,11 @@ async function status(env) {
 
 async function dashboard(env) {
   const q = async (sql) => (await env.DB.prepare(sql).all()).results || [];
-  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog, resolvedRows] = await Promise.all([
+  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, productSearch, productsImported, workspace, syncLog, resolvedRows] = await Promise.all([
     q(`SELECT date,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,conversions,new_visitors AS newVisitors,email_clicks AS emailClicks,form_submits AS formSubmits FROM daily_site_metrics ORDER BY date`),
     q(`SELECT period_days AS periodDays,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,new_visitors AS newVisitors,conversions,email_clicks AS emailClicks,form_submits AS formSubmits FROM site_period_summary ORDER BY period_days`),
     q(`SELECT name,visits,users,bounce,conversions FROM traffic_sources WHERE period_key=(SELECT MAX(period_key) FROM traffic_sources) ORDER BY visits DESC`),
-    q(`SELECT page,title,visits,users,bounce,depth,duration,conversions FROM landing_pages WHERE period_key=(SELECT MAX(period_key) FROM landing_pages) ORDER BY visits DESC LIMIT 150`),
+    q(`SELECT page,title,visits,users,bounce,depth,duration,conversions FROM landing_pages WHERE period_key=(SELECT MAX(period_key) FROM landing_pages) ORDER BY visits DESC LIMIT 1000`),
     q(`SELECT name,visits,users FROM search_engines WHERE period_key=(SELECT MAX(period_key) FROM search_engines) ORDER BY visits DESC`),
     q(`SELECT engine,phrase,visits,users,bounce,depth,duration FROM search_phrases WHERE period_key=(SELECT MAX(period_key) FROM search_phrases) ORDER BY visits DESC LIMIT 200`),
     q(`SELECT source,medium,campaign,visits,users,bounce,depth,duration,conversions FROM utm_stats WHERE period_key=(SELECT MAX(period_key) FROM utm_stats) ORDER BY visits DESC LIMIT 300`),
@@ -329,6 +335,8 @@ async function dashboard(env) {
     q(`SELECT campaign_id AS campaignId,url,clicks FROM email_links ORDER BY clicks DESC LIMIT 500`),
     q(`SELECT date,profile_views AS profileViews,target_clients AS targetClients,target_actions AS targetActions,routes,calls,website_clicks AS websiteClicks,direct_visits AS directVisits,discovery_visits AS discoveryVisits,photo_views AS photoViews FROM yandex_business_daily ORDER BY date`),
     q(`SELECT query,service,visits FROM yandex_business_queries ORDER BY visits DESC LIMIT 200`),
+    q(`SELECT url,date,popular_query AS popularQuery,impressions,clicks,ctr,position,demand FROM product_search_daily ORDER BY date,url`),
+    q(`SELECT url,impressions,clicks,ctr,avg_position AS avgPosition,share_in_serp AS shareInSerp,queries_count AS queriesCount,imported_at AS importedAt FROM yandex_products_import ORDER BY impressions DESC`),
     q(`SELECT id,kind,parent_id AS parentId,status,title,body,priority,due_date AS dueDate,checked,pinned,sort_order AS sortOrder,created_at AS createdAt,updated_at AS updatedAt FROM workspace_items ORDER BY pinned DESC, sort_order, updated_at DESC`),
     q(`SELECT source,last_sync AS lastSync,status,message FROM sync_log ORDER BY source`),
     q(`SELECT source,external_id AS externalId,label FROM resolved_integrations`)
@@ -342,7 +350,7 @@ async function dashboard(env) {
   return json({
     site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
     seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
-    adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog,
+    adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, productSearch, productsImported, workspace, syncLog,
     meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping }
   });
 }
@@ -400,7 +408,7 @@ async function syncMetrika(env) {
   const dailyMetrics = ['ym:s:visits','ym:s:users','ym:s:pageviews','ym:s:bounceRate','ym:s:pageDepth','ym:s:avgVisitDurationSeconds','ym:s:percentNewVisitors','ym:s:anyGoalReaches'];
   const dailyUrl = withParams(base, { ...common, dimensions: 'ym:s:date', metrics: dailyMetrics.join(',') });
   const sourceUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:trafficSourceName', metrics: 'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:anyGoalReaches', sort: '-ym:s:visits', limit: '100' });
-  const pageUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:startURL', metrics: 'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds,ym:s:anyGoalReaches', sort: '-ym:s:visits', limit: '150' });
+  const pageUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:startURL', metrics: 'ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageDepth,ym:s:avgVisitDurationSeconds,ym:s:anyGoalReaches', sort: '-ym:s:visits', limit: '1000' });
   const deviceUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:deviceCategory', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '30' });
   const regionUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:regionArea', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '50' });
   const engineUrl = withParams(base, { ...common, date1: '29daysAgo', dimensions: 'ym:s:searchEngineName', metrics: 'ym:s:visits,ym:s:users', sort: '-ym:s:visits', limit: '50' });
@@ -561,6 +569,17 @@ async function syncWebmaster(env) {
     apiGet(withParams(`${root}/search-urls/in-search/history`, { date_from: dateOnly(historyStart), date_to: dateOnly(end) }), headers).catch(() => ({ history: [] }))
   ]);
 
+  // URL-level search visibility for product/catalog pages. This recreates the useful part of
+  // Yandex Products «Видимость в Поиске» without a second token: impressions/clicks/CTR/position
+  // come from Webmaster; post-click behaviour is joined with Metrica in the UI.
+  const productUrlAnalytics = await fetchProductUrlAnalytics(root, headers).catch(() => []);
+  await env.DB.prepare(`DELETE FROM product_search_daily WHERE date < date('now','-180 day')`).run().catch(()=>{});
+  for (const row of productUrlAnalytics) {
+    await env.DB.prepare(`INSERT INTO product_search_daily(url,date,popular_query,impressions,clicks,ctr,position,demand,updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(url,date) DO UPDATE SET popular_query=excluded.popular_query,impressions=excluded.impressions,clicks=excluded.clicks,ctr=excluded.ctr,position=excluded.position,demand=excluded.demand,updated_at=CURRENT_TIMESTAMP`)
+      .bind(row.url,row.date,row.popularQuery||'',num(row.impressions),num(row.clicks),num(row.ctr),num(row.position),num(row.demand)).run();
+  }
+
   const prevByText = new Map((prev.queries || []).map(q => [q.query_text, q]));
   await env.DB.prepare('DELETE FROM seo_queries').run();
   for (const q of current.queries || []) {
@@ -593,8 +612,56 @@ async function syncWebmaster(env) {
       .bind(date,num(item.value)).run();
   }
 
-  await logSync(env, 'webmaster', 'ok', `Вебмастер: ${current.queries?.length || 0} запросов, ${Object.keys(diagnostics.problems || {}).length} диагностик`);
-  return { message: `Вебмастер обновлён: ${current.queries?.length || 0} запросов, индексация и диагностика загружены.` };
+  await logSync(env, 'webmaster', 'ok', `Вебмастер: ${current.queries?.length || 0} запросов, ${productUrlAnalytics.length} дневных строк товарных URL, ${Object.keys(diagnostics.problems || {}).length} диагностик`);
+  return { message: `Вебмастер обновлён: ${current.queries?.length || 0} запросов, ${new Set(productUrlAnalytics.map(x=>x.url)).size} товарных URL, индексация и диагностика загружены.` };
+}
+
+
+async function fetchProductUrlAnalytics(root, headers) {
+  const rows = [];
+  let offset = 0;
+  let total = 0;
+  const limit = 500;
+  do {
+    const res = await fetch(`${root}/query-analytics/list`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify({
+        offset,
+        limit,
+        device_type_indicator: 'ALL',
+        search_location: 'ALL_LOCATIONS_ORGANIC',
+        text_indicator: 'URL',
+        filters: { text_filters: [{ text_indicator: 'URL', operation: 'TEXT_CONTAINS', value: '/catalog/' }] }
+      })
+    });
+    const text = await res.text();
+    let data = {}; try { data = JSON.parse(text); } catch {}
+    if (!res.ok) throw new Error(`Вебмастер URL analytics ${res.status}: ${data?.error_message || text.slice(0,300)}`);
+    const items = data.text_indicator_to_statistics || data.textIndicatorToStatistics || [];
+    total = num(data.count) || items.length;
+    for (const item of items) {
+      const url = String(item?.text_indicator?.value || item?.textIndicator?.value || '').trim();
+      if (!url || !/\/catalog\//i.test(url)) continue;
+      const popularQuery = String(item?.popular_complementary_indicator?.value || item?.popularComplementaryIndicator?.value || '').trim();
+      const byDate = new Map();
+      for (const st of item.statistics || []) {
+        const date = String(st.date || '').slice(0,10); if (!date) continue;
+        const rec = byDate.get(date) || { url, date, popularQuery, impressions:0, clicks:0, ctr:0, position:0, demand:0 };
+        const field = String(st.field || '').toUpperCase(), value = num(st.value);
+        if (field === 'IMPRESSIONS') rec.impressions = value;
+        else if (field === 'CLICKS') rec.clicks = value;
+        else if (field === 'CTR') rec.ctr = value;
+        else if (field === 'POSITION') rec.position = value;
+        else if (field === 'DEMAND') rec.demand = value;
+        byDate.set(date, rec);
+      }
+      rows.push(...byDate.values());
+    }
+    offset += items.length;
+    if (!items.length) break;
+  } while (offset < total && offset < 3000);
+  return rows;
 }
 
 /* -------------------- YANDEX DIRECT -------------------- */
@@ -1403,6 +1470,24 @@ async function importYandexBusiness(request, env) {
 }
 
 /* -------------------- IMPORTS -------------------- */
+
+
+async function importYandexProducts(request, env) {
+  let body; try { body = await request.json(); } catch { return json({ error:'Некорректный JSON' },400); }
+  const rows = Array.isArray(body?.rows) ? body.rows.slice(0,5000) : [];
+  if (!rows.length) return json({ error:'В файле не найдено строк отчёта Яндекс Товаров.' },400);
+  await env.DB.prepare('DELETE FROM yandex_products_import').run();
+  let saved = 0;
+  for (const r of rows) {
+    const url = String(r.url || '').trim(); if (!url) continue;
+    await env.DB.prepare(`INSERT INTO yandex_products_import(url,impressions,clicks,ctr,avg_position,share_in_serp,queries_count,imported_at) VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(url) DO UPDATE SET impressions=excluded.impressions,clicks=excluded.clicks,ctr=excluded.ctr,avg_position=excluded.avg_position,share_in_serp=excluded.share_in_serp,queries_count=excluded.queries_count,imported_at=CURRENT_TIMESTAMP`)
+      .bind(url,num(r.impressions),num(r.clicks),num(r.ctr),num(r.avgPosition),num(r.shareInSerp),num(r.queriesCount)).run();
+    saved++;
+  }
+  await logSync(env,'yproducts','ok',`Яндекс Товары: импортировано ${saved} страниц из XLSX/CSV`).catch(()=>{});
+  return json({ message:`Яндекс Товары: импортировано ${saved} строк. Точная доля в выдачах сохранена.`, saved },200);
+}
 
 async function importRows(request, env) {
   const { source, rows, mode } = await request.json();
