@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.4 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
+// CS Marketing by skayfall v2.5 — server-first marketing OS: analytics + ads + social + Yandex Business + workspace
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -258,12 +258,12 @@ async function status(env) {
         !env.VK_ADS_TOKEN && !env.VK_ADS_CLIENT_SECRET && 'VK_ADS_CLIENT_SECRET'
       ].filter(Boolean), 'api',
       { partial: vkAdsPartial, note: vkAdsPartial ? 'VK_ADS_CLIENT_SECRET уже есть; нужен только VK_ADS_CLIENT_ID как обычная Variable.' : null }),
-    vksocial: item('vksocial', vkSocialReady, [], env.VK_COMMUNITY_TOKEN ? 'hybrid' : 'public-web',
-      { note: `Посты проверяются по публичной странице ${env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk}. Если токен сообщества доступен, приложение дополнительно пробует получить агрегированную статистику.` }),
+    vksocial: item('vksocial', vkSocialReady, [], (env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'api+public' : 'public-web',
+      { note: (env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || (env.VK_APP_ID && env.VK_APP_SECRET)) ? 'Для чтения постов используется отдельная авторизация VK; токен сообщества остаётся только для доступной статистики сообщества.' : `Публичная страница ${env.VK_COMMUNITY_URL || DEFAULT_SOCIAL_URLS.vk} часто не отдаёт стену серверным запросам. Для надёжной ленты добавьте VK_SERVICE_TOKEN либо VK_APP_ID + VK_APP_SECRET.` }),
     telegram: item('telegram', telegramReady, [], 'public-web',
       { note: `Посты и просмотры проверяются по публичной web-ленте ${env.TELEGRAM_CHANNEL_URL || DEFAULT_SOCIAL_URLS.telegram}.` }),
-    maxsocial: item('maxsocial', maxReady, [], env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID ? 'hybrid' : 'public-web',
-      { note: `Посты проверяются по публичной странице ${env.MAX_CHANNEL_URL || DEFAULT_SOCIAL_URLS.max}. Bot API используется как расширенный источник, если настроен.` }),
+    maxsocial: item('maxsocial', maxReady, [], env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID ? 'api' : 'public-web',
+      { note: env.MAX_BOT_TOKEN && env.MAX_CHANNEL_ID ? 'Посты читаются через официальный MAX Bot API.' : `Публичная страница ${env.MAX_CHANNEL_URL || DEFAULT_SOCIAL_URLS.max} отдаёт браузеру динамический интерфейс, но обычно не отдаёт серверу историю постов. Для надёжной ленты нужен MAX_BOT_TOKEN + MAX_CHANNEL_ID и бот-администратор канала.` }),
     dzen: item('dzen', dzenReady, [], 'public-web',
       { note: `Публикации проверяются по публичной странице ${env.DZEN_CHANNEL_URL || DEFAULT_SOCIAL_URLS.dzen}. Сохраняются только метрики, которые Дзен реально отдаёт в публичной странице.` }),
     ybusiness: item('ybusiness', yandexBase, [!env.YANDEX_TOKEN && 'YANDEX_TOKEN'].filter(Boolean), 'metrika-business',
@@ -284,6 +284,8 @@ async function status(env) {
     VK_ADS_TOKEN: Boolean(env.VK_ADS_TOKEN),
     VK_COMMUNITY_TOKEN: Boolean(env.VK_COMMUNITY_TOKEN),
     VK_SERVICE_TOKEN: Boolean(env.VK_SERVICE_TOKEN),
+    VK_APP_ID: Boolean(env.VK_APP_ID),
+    VK_APP_SECRET: Boolean(env.VK_APP_SECRET),
     VK_USER_TOKEN: Boolean(env.VK_USER_TOKEN),
     VK_COMMUNITY_URL: Boolean(env.VK_COMMUNITY_URL),
     VK_GROUP_ID: Boolean(env.VK_GROUP_ID),
@@ -1017,9 +1019,19 @@ function extractVkStatsRows(payload) {
 
 /* -------------------- VK COMMUNITY -------------------- */
 
+async function getVkAppToken(env) {
+  const clientId=String(env.VK_APP_ID||'').trim(), secret=String(env.VK_APP_SECRET||'').trim();
+  if(!clientId||!secret) return '';
+  const body=new URLSearchParams({client_id:clientId,client_secret:secret,v:'5.199',grant_type:'client_credentials'});
+  const res=await fetch('https://oauth.vk.ru/access_token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body.toString()});
+  const text=await res.text(); let data={}; try{data=JSON.parse(text)}catch{}
+  if(!res.ok||data?.error) throw new Error(data?.error_description||data?.error||`VK OAuth ${res.status}`);
+  return String(data?.access_token||'').trim();
+}
+
 async function syncVkCommunity(env) {
   const communityToken = String(env.VK_COMMUNITY_TOKEN || '').trim();
-  const readToken = String(env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || '').trim();
+  const readToken = String(env.VK_SERVICE_TOKEN || env.VK_USER_TOKEN || '').trim() || await getVkAppToken(env).catch(()=> '');
   const group = await resolveVkCommunityHybrid(env, communityToken);
   const groupId = group?.id ? String(group.id) : '';
   const groupName = String(group?.name || group?.screen_name || 'VK-сообщество');
@@ -1030,6 +1042,7 @@ async function syncVkCommunity(env) {
   let posts = [];
   let postsSource = 'none';
   let postsNote = '';
+  if (!readToken) postsNote = 'Для wall.get не подходит токен сообщества. Добавьте VK_SERVICE_TOKEN либо VK_APP_ID + VK_APP_SECRET (или VK_USER_TOKEN); иначе остаётся только нестабильное чтение публичной HTML-страницы.';
   if (readToken && groupId) {
     try {
       const wall = await vkApi('wall.get', { owner_id: `-${groupId}`, count: 100, filter: 'owner', extended: 0 }, readToken);
