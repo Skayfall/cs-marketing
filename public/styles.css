@@ -129,3 +129,9 @@ body{font-size:14px}.app-shell{grid-template-columns:238px minmax(0,1fr)}
 .seo-source-divider.google-divider{color:#5476a8}.seo-source-divider.google-divider:before,.seo-source-divider.google-divider:after{background:#d9e5ff}
 @media(max-width:980px){.span-12{grid-column:auto}.indexation-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.performance-layout>.span-12 .chart-wrap{height:320px}}
 @media(max-width:680px){.indexation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.performance-layout>.span-12 .chart-wrap{height:300px}}
+
+/* SEO query table: compact by default, expandable on demand */
+.seo-table-tools{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.seo-table-toggle{white-space:nowrap}
+.seo-table-summary{min-height:18px;padding:8px 2px 0;color:var(--muted);font-size:11px;text-align:right}
+@media(max-width:760px){.seo-table-tools{width:100%;justify-content:stretch}.seo-table-tools .input{flex:1;min-width:160px}.seo-table-toggle{flex:0 0 auto}}
