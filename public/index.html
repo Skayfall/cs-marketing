@@ -31,6 +31,7 @@
 <div class="brand"><img alt="" class="brand-mark-img" src="/icon.svg"/><div><div class="brand-name">CS Marketing</div><div class="brand-sub">маркетинговый центр · skayfall</div></div></div>
 <nav aria-label="Основная навигация" class="nav">
 <button class="nav-item active" data-view="overview"><span class="nav-glyph">⌂</span><span>Обзор</span></button>
+<button class="nav-item" data-view="performance"><span class="nav-glyph">♛</span><span>Эффективность</span></button>
 <button class="nav-item" data-view="site"><span class="nav-glyph">◌</span><span>Сайт</span></button>
 <button class="nav-item" data-view="business"><span class="nav-glyph">⌖</span><span>Яндекс Карты</span></button>
 <button class="nav-item" data-view="seo"><span class="nav-glyph">↗</span><span>SEO</span></button>
@@ -81,6 +82,23 @@
 <article class="panel maps-overview"><div class="panel-head"><div><div class="eyebrow">Яндекс Карты</div><h3>Локальная видимость компании</h3></div><button class="secondary-btn" id="openBusinessViewBtn">Подробнее</button></div><div class="maps-overview-grid" id="businessOverview"></div></article>
 
 </section>
+<section class="view" id="performance">
+<div class="performance-hero panel">
+  <div>
+    <span class="section-kicker">Сводная эффективность каналов</span>
+    <h3>Что сейчас работает лучше всего</h3>
+    <p class="muted">Рейтинг учитывает результат, качество трафика, эффективность, динамику и доступные конверсии. Это сравнительный индекс 0–100, а не бухгалтерский ROI: денежную прибыль можно посчитать после подключения данных о продажах.</p>
+  </div>
+  <div class="performance-score-note"><strong id="performanceDataCoverage">—</strong><span>каналов с достаточными данными</span></div>
+</div>
+<div class="podium" id="channelPodium"></div>
+<div class="dashboard-grid performance-layout">
+  <article class="panel span-8"><div class="panel-head"><div><span class="section-kicker">Рейтинг</span><h3>Все каналы по индексу эффективности</h3></div><span class="muted">Период: общий календарь</span></div><div class="table-scroll"><table><thead><tr><th>#</th><th>Канал</th><th>Индекс</th><th>Главный результат</th><th>Качество</th><th>Затраты</th><th>Динамика</th><th>Комментарий</th></tr></thead><tbody id="channelRankingTable"></tbody></table></div></article>
+  <article class="panel span-4"><div class="panel-head"><div><span class="section-kicker">Комментарий приложения</span><h3>Куда направить внимание</h3></div></div><div class="issue-list" id="channelPerformanceInsights"></div></article>
+  <article class="panel span-12"><div class="panel-head"><div><span class="section-kicker">Профиль каналов</span><h3>Результат и эффективность</h3></div></div><div class="chart-wrap"><canvas id="channelPerformanceChart"></canvas></div></article>
+</div>
+<article class="panel methodology-panel"><div class="panel-head"><div><span class="section-kicker">Как считается</span><h3>Почему канал выше или ниже</h3></div></div><div class="method-grid"><div><strong>Платная реклама</strong><span>Конверсии, CPA, CTR, клики и динамика. Нулевая конверсия при расходе снижает балл.</span></div><div><strong>SEO</strong><span>Клики, CTR, позиция и поисковая видимость Яндекса / Google.</span></div><div><strong>Соцсети</strong><span>Просмотры, ER, прирост подписчиков и стабильность публикаций.</span></div><div><strong>Email и Карты</strong><span>Клики и качество рассылок; целевые действия и конверсия профиля.</span></div></div></article>
+</section>
 <section class="view" id="site">
 <div class="metric-grid" id="siteMetrics"></div>
 <div class="two-col wide-left">
@@ -121,67 +139,26 @@
 
 </section>
 <section class="view" id="seo">
-<div class="search-suite-toolbar">
-  <div class="channel-tabs search-tabs" id="searchModeTabs">
-    <button class="channel-tab active" data-search-pane="summary" type="button">Сводка</button>
-    <button class="channel-tab" data-search-pane="yandex" type="button">Яндекс</button>
-    <button class="channel-tab" data-search-pane="google" type="button">Google</button>
-    <button class="channel-tab" data-search-pane="geo" type="button">GEO / AEO</button>
+<div class="metric-grid" id="seoMetrics"></div>
+<article class="panel google-search-console-panel">
+  <div class="panel-head"><div><span class="section-kicker">Google Search Console</span><h3>Поиск Google</h3><p class="panel-subtitle" id="gscStatusText">Интеграция подготовлена. После добавления сервисного аккаунта данные начнут синхронизироваться автоматически.</p></div><button class="secondary-btn sync-source-btn" data-sync-source="searchconsole" id="gscSyncBtn" type="button">Синхронизировать Google</button></div>
+  <div class="gsc-metric-grid" id="gscMetrics"></div>
+  <div class="dashboard-grid gsc-layout">
+    <div class="span-7"><div class="chart-wrap medium"><canvas id="gscChart"></canvas></div></div>
+    <div class="span-5"><div class="table-scroll compact-table"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th></tr></thead><tbody id="gscQueryTable"></tbody></table></div></div>
   </div>
-  <div class="search-suite-note">SEO — видимость и позиции · GEO/AEO — готовность контента для генеративных и ответных систем</div>
+</article>
+<div class="dashboard-grid seo-layout">
+  <article class="panel span-7"><div class="panel-head"><div><span class="section-kicker">Видимость</span><h3>Распределение запросов по позициям</h3><p class="panel-subtitle">Сравнение текущего периода с предыдущим равным периодом.</p></div></div><div class="chart-wrap"><canvas id="seoIndexChart"></canvas></div></article>
+  <article class="panel span-5"><div class="panel-head"><div><span class="section-kicker">Движение</span><h3>Что выросло и что просело</h3></div></div><div id="seoMovementSummary" class="movement-summary"></div></article>
+  <article class="panel span-7"><div class="panel-head"><div><span class="section-kicker">Потенциал</span><h3>Запросы, которые стоит дожать</h3></div></div><div class="opportunity-list" id="seoPotentialList"></div></article>
+  <article class="panel span-5"><div class="panel-head"><div><span class="section-kicker">Диагностика</span><h3>Технические сигналы</h3></div></div><div class="issue-list" id="seoProblems"></div></article>
 </div>
-
-<div class="search-pane active" data-search-pane-content="summary">
-  <div class="metric-grid" id="seoMetrics"></div>
-  <div class="two-col wide-left">
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Две поисковые системы</span><h3>Где сайт сильнее: Яндекс или Google</h3></div></div><div class="search-engine-compare" id="searchEngineCompare"></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Достоверность</span><h3>Как читать эти данные</h3></div></div><div class="issue-list" id="searchDataQuality"></div></article>
-  </div>
-  <article class="panel"><div class="panel-head"><div><span class="section-kicker">Пересечение семантики</span><h3>Запросы Яндекса и Google рядом</h3><p class="panel-subtitle">Показывает разрыв между поисковиками и помогает понять, где страницу проще дожать.</p></div><input class="input compact" id="crossSearchInput" placeholder="Найти запрос…"/></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Яндекс: позиция</th><th>Google: позиция</th><th>Яндекс: показы</th><th>Google: показы</th><th>Сигнал</th></tr></thead><tbody id="crossSearchTable"></tbody></table></div></article>
-  <article class="panel"><div class="panel-head"><div><span class="section-kicker">План</span><h3>Что менять в поисковом продвижении</h3></div><span class="muted">SEO + GEO + AEO по реальным данным и аудиту страниц</span></div><div class="plan-grid" id="seoPlan"></div></article>
-</div>
-
-<div class="search-pane" data-search-pane-content="yandex" hidden>
-  <div class="metric-grid" id="yandexSeoMetrics"></div>
-  <div class="dashboard-grid seo-layout">
-    <article class="panel span-7"><div class="panel-head"><div><span class="section-kicker">Яндекс Вебмастер</span><h3>Распределение запросов по позициям</h3><p class="panel-subtitle">Сравнение текущего периода с предыдущим равным периодом.</p></div></div><div class="chart-wrap"><canvas id="seoIndexChart"></canvas></div></article>
-    <article class="panel span-5"><div class="panel-head"><div><span class="section-kicker">Движение</span><h3>Что выросло и что просело</h3></div></div><div id="seoMovementSummary" class="movement-summary"></div></article>
-    <article class="panel span-7"><div class="panel-head"><div><span class="section-kicker">Потенциал</span><h3>Запросы, которые стоит дожать</h3></div></div><div class="opportunity-list" id="seoPotentialList"></div></article>
-    <article class="panel span-5"><div class="panel-head"><div><span class="section-kicker">Диагностика</span><h3>Технические сигналы</h3></div></div><div class="issue-list" id="seoProblems"></div></article>
-  </div>
-  <div id="seoOpportunities" hidden></div>
-  <article class="panel"><div class="panel-head"><div><span class="section-kicker">Запросы Яндекса</span><h3>Показы, клики и позиции</h3></div><input class="input compact" id="seoSearch" placeholder="Найти запрос…"/></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Позиция клика</th><th>Изменение</th><th>Сигнал</th></tr></thead><tbody id="seoTable"></tbody></table></div></article>
-</div>
-
-<div class="search-pane" data-search-pane-content="google" hidden>
-  <div class="metric-grid" id="googleSeoMetrics"></div>
-  <div class="two-col wide-left">
-    <article class="panel chart-panel"><div class="panel-head"><div><span class="section-kicker">Google Search Console</span><h3>Показы и клики по дням</h3></div></div><div class="chart-wrap"><canvas id="googleSearchChart"></canvas></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Сигналы</span><h3>Что происходит в Google</h3></div></div><div class="issue-list" id="googleSeoInsights"></div></article>
-  </div>
-  <div class="two-col">
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Устройства</span><h3>Как ищут в Google</h3></div></div><div class="compare-grid" id="googleDeviceGrid"></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">География</span><h3>Страны по показам</h3></div></div><div class="rank-list" id="googleCountryList"></div></article>
-  </div>
-  <div class="two-col">
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Запросы Google</span><h3>Что даёт показы и клики</h3></div></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Δ позиции</th></tr></thead><tbody id="googleQueryTable"></tbody></table></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Страницы Google</span><h3>Какие URL видит поиск</h3></div></div><div class="table-scroll"><table><thead><tr><th>Страница</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th></tr></thead><tbody id="googlePageTable"></tbody></table></div></article>
-  </div>
-  <div class="two-col">
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Sitemap</span><h3>Карты сайта в Google</h3></div></div><div class="mini-list" id="googleSitemapList"></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Генеративный поиск</span><h3>AI Overviews и AI Mode</h3></div></div><div class="issue-list" id="googleAiSearch"></div></article>
-  </div>
-</div>
-
-<div class="search-pane" data-search-pane-content="geo" hidden>
-  <div class="metric-grid" id="geoAeoMetrics"></div>
-  <div class="two-col wide-left">
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">GEO / AEO</span><h3>Готовность сайта к ответным и генеративным системам</h3><p class="panel-subtitle">Это внутренняя эвристика CS Marketing, а не официальный рейтинг Google или Яндекса.</p></div></div><div class="issue-list" id="geoAeoInsights"></div></article>
-    <article class="panel"><div class="panel-head"><div><span class="section-kicker">Ответный спрос</span><h3>Вопросы, которые уже ищут</h3></div></div><div class="opportunity-list" id="answerQueryList"></div></article>
-  </div>
-  <article class="panel"><div class="panel-head"><div><span class="section-kicker">Аудит страниц</span><h3>Что помогает SEO, GEO и AEO</h3></div><span class="muted">Проверяются основные страницы и URL с видимостью в Google</span></div><div class="table-scroll"><table><thead><tr><th>Страница</th><th>SEO</th><th>GEO</th><th>AEO</th><th>H1</th><th>Вопросные блоки</th><th>Schema.org</th><th>Что улучшить</th></tr></thead><tbody id="readinessTable"></tbody></table></div></article>
-</div>
+<article class="panel"><div class="panel-head"><div><span class="section-kicker">План</span><h3>Что менять на сайте в первую очередь</h3></div><span class="muted">По запросам, индексации и поведению страниц</span></div><div class="plan-grid" id="seoPlan"></div></article>
+<div id="seoOpportunities" hidden></div>
+<article class="panel"><div class="panel-head"><div><span class="section-kicker">Запросы</span><h3>Показы, клики и позиции</h3></div><input class="input compact" id="seoSearch" placeholder="Найти запрос…"/></div><div class="table-scroll"><table><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Позиция клика</th><th>Изменение</th><th>Сигнал</th></tr></thead><tbody id="seoTable"></tbody></table></div></article>
 </section>
+
 <section class="view" id="ads">
 <div class="metric-grid" id="adsMetrics"></div><div class="ad-portfolio" id="adSourceStatus"></div>
 <div class="channel-tabs" id="adChannelTabs"></div>
@@ -255,7 +232,7 @@
 <div class="report-builder">
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Генератор</div><h3>Сводный маркетинговый отчёт</h3></div></div>
 <div class="form-grid"><label>Название<input class="input" id="reportName" value="Маркетинговый отчёт ПТГ «Центр Сантехники»"/></label><div class="report-range-box"><span>Период отчёта</span><strong id="reportRangeLabel">—</strong><small>Используется общий календарь в верхней панели</small><input id="reportPeriod" type="hidden" value="30"/></div></div>
-<div class="check-grid"><label><input checked="" class="reportCheck" type="checkbox" value="summary"/> Резюме</label><label><input checked="" class="reportCheck" type="checkbox" value="site"/> Сайт</label><label><input checked="" class="reportCheck" type="checkbox" value="business"/> Яндекс Карты</label><label><input checked="" class="reportCheck" type="checkbox" value="seo"/> SEO / GEO / AEO</label><label><input checked="" class="reportCheck" type="checkbox" value="ads"/> Реклама</label><label><input checked="" class="reportCheck" type="checkbox" value="social"/> Соцсети</label><label><input checked="" class="reportCheck" type="checkbox" value="email"/> Email</label><label><input checked="" class="reportCheck" type="checkbox" value="plan"/> План действий</label></div>
+<div class="check-grid"><label><input checked="" class="reportCheck" type="checkbox" value="summary"/> Резюме</label><label><input checked="" class="reportCheck" type="checkbox" value="performance"/> Эффективность каналов</label><label><input checked="" class="reportCheck" type="checkbox" value="site"/> Сайт</label><label><input checked="" class="reportCheck" type="checkbox" value="business"/> Яндекс Карты</label><label><input checked="" class="reportCheck" type="checkbox" value="seo"/> SEO</label><label><input checked="" class="reportCheck" type="checkbox" value="ads"/> Реклама</label><label><input checked="" class="reportCheck" type="checkbox" value="social"/> Соцсети</label><label><input checked="" class="reportCheck" type="checkbox" value="email"/> Email</label><label><input checked="" class="reportCheck" type="checkbox" value="plan"/> План действий</label></div>
 <div class="button-row"><button class="primary-btn" id="generateReportBtn">Скачать PDF</button><button class="secondary-btn" id="downloadCommentBtn">Скачать комментарий .txt</button><button class="secondary-btn" id="downloadCsvBtn">CSV</button><button class="secondary-btn" id="downloadJsonBtn">JSON</button></div>
 </article>
 <article class="panel"><div class="eyebrow">Предпросмотр</div><div class="report-preview rich-preview" id="reportPreview"></div></article>
@@ -263,7 +240,7 @@
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий для руководителя</div><h3>Готовый текст по цифрам</h3></div></div><div class="manager-comment" id="managerComment"></div></article>
 </section>
 <section class="view" id="integrations">
-<article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Метрика, Вебмастер, Директ, VK Реклама, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. Все рабочие данные и заметки хранятся на сервере.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
+<article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Метрика, Вебмастер, Google Search Console, Директ, VK Реклама, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. Все рабочие данные и заметки хранятся на сервере.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
 <div class="integration-grid" id="integrationGrid"></div>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Параметры Cloudflare</div><h3>Проверка конфигурации</h3></div></div><div class="runtime-summary" id="runtimeSummary"></div><div class="table-scroll"><table><thead><tr><th>Параметр</th><th>Тип</th><th>Статус</th><th>Используется для</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Журнал</div><h3>Последние синхронизации</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Когда</th><th>Статус</th><th>Комментарий</th></tr></thead><tbody id="syncLogTable"></tbody></table></div></article>
