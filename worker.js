@@ -46,7 +46,7 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/workspace/item/')) return workspaceDelete(url, env);
   if (request.method === 'POST' && url.pathname === '/api/sync/all') return json(await syncConfigured(env), 200);
   if (request.method === 'POST' && url.pathname === '/api/import') return importRows(request, env);
-  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|ybusiness|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
+  const m = url.pathname.match(/^\/api\/sync\/(metrika|webmaster|searchconsole|ybusiness|direct|vkads|vksocial|telegram|maxsocial|dzen|unisender)$/);
   if (request.method === 'POST' && m) {
     try {
       const result = await syncSource(m[1], env);
@@ -165,6 +165,10 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS traffic_sources (period_key TEXT NOT NULL, name TEXT NOT NULL, visits INTEGER DEFAULT 0, users INTEGER DEFAULT 0, bounce REAL DEFAULT 0, conversions REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(period_key,name))`,
       `CREATE TABLE IF NOT EXISTS landing_pages (period_key TEXT NOT NULL, page TEXT NOT NULL, title TEXT, visits INTEGER DEFAULT 0, users INTEGER DEFAULT 0, bounce REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, conversions REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(period_key,page))`,
       `CREATE TABLE IF NOT EXISTS seo_queries (query TEXT PRIMARY KEY, shows REAL DEFAULT 0, clicks REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, delta REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS gsc_daily (date TEXT PRIMARY KEY, clicks REAL DEFAULT 0, impressions REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS gsc_queries (query TEXT PRIMARY KEY, clicks REAL DEFAULT 0, impressions REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS gsc_pages (page TEXT PRIMARY KEY, clicks REAL DEFAULT 0, impressions REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS gsc_devices (device TEXT PRIMARY KEY, clicks REAL DEFAULT 0, impressions REAL DEFAULT 0, ctr REAL DEFAULT 0, position REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS sync_log (source TEXT PRIMARY KEY, last_sync TEXT, status TEXT, message TEXT)`,
       `CREATE TABLE IF NOT EXISTS resolved_integrations (source TEXT PRIMARY KEY, external_id TEXT, label TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS search_engines (period_key TEXT NOT NULL, name TEXT NOT NULL, visits REAL DEFAULT 0, users REAL DEFAULT 0, PRIMARY KEY(period_key,name))`,
@@ -243,12 +247,16 @@ async function status(env) {
   const telegramReady = true;
   const maxReady = true;
   const dzenReady = true;
+  const googleReady = Boolean(env.GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON || (env.GOOGLE_SEARCH_CONSOLE_EMAIL && env.GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY));
 
   const integrations = {
     metrika: item('metrika', yandexBase && metrikaTarget,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !metrikaTarget && 'SITE_URL или METRIKA_COUNTER_ID'].filter(Boolean)),
     webmaster: item('webmaster', yandexBase && webmasterTarget,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN', !webmasterTarget && 'SITE_URL или WEBMASTER_HOST_ID'].filter(Boolean)),
+    searchconsole: item('searchconsole', googleReady,
+      [!googleReady && 'GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON или EMAIL + PRIVATE_KEY'].filter(Boolean), 'api',
+      { note: googleReady ? 'Google Search Console: клики, показы, CTR, позиции, запросы, страницы и устройства. Свойство определяется автоматически по SITE_URL либо через GOOGLE_SEARCH_CONSOLE_PROPERTY.' : 'Интеграция уже встроена и начнёт работать после выдачи сервисному аккаунту доступа к ресурсу Search Console.' }),
     direct: item('direct', yandexBase,
       [!env.YANDEX_TOKEN && 'YANDEX_TOKEN'].filter(Boolean), 'api',
       { note: yandexBase ? 'Используется тот же YANDEX_TOKEN. Если Direct API ещё не одобрен, приложение автоматически берёт кампании, клики и расходы из отчёта «Директ, расходы» Яндекс Метрики.' : null }),
@@ -278,6 +286,10 @@ async function status(env) {
     SESSION_SECRET: Boolean(env.SESSION_SECRET),
     SITE_URL: Boolean(env.SITE_URL),
     YANDEX_TOKEN: Boolean(env.YANDEX_TOKEN),
+    GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON: Boolean(env.GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON),
+    GOOGLE_SEARCH_CONSOLE_EMAIL: Boolean(env.GOOGLE_SEARCH_CONSOLE_EMAIL),
+    GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY: Boolean(env.GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY),
+    GOOGLE_SEARCH_CONSOLE_PROPERTY: Boolean(env.GOOGLE_SEARCH_CONSOLE_PROPERTY),
     UNISENDER_API_KEY: Boolean(env.UNISENDER_API_KEY),
     VK_ADS_CLIENT_ID: Boolean(env.VK_ADS_CLIENT_ID),
     VK_ADS_CLIENT_SECRET: Boolean(env.VK_ADS_CLIENT_SECRET),
@@ -313,7 +325,7 @@ async function status(env) {
 
 async function dashboard(env) {
   const q = async (sql) => (await env.DB.prepare(sql).all()).results || [];
-  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog, resolvedRows, settingsRows] = await Promise.all([
+  const [site, sitePeriodRows, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo, seoSummaryRows, seoIndex, seoProblems, gscDaily, gscQueries, gscPages, gscDevices, adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog, resolvedRows, settingsRows] = await Promise.all([
     q(`SELECT date,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,conversions,new_visitors AS newVisitors,email_clicks AS emailClicks,form_submits AS formSubmits FROM daily_site_metrics ORDER BY date`),
     q(`SELECT period_days AS periodDays,visits,users,pageviews,bounce_rate AS bounceRate,depth,duration,new_visitors AS newVisitors,conversions,email_clicks AS emailClicks,form_submits AS formSubmits FROM site_period_summary ORDER BY period_days`),
     q(`SELECT name,visits,users,bounce,conversions FROM traffic_sources WHERE period_key=(SELECT MAX(period_key) FROM traffic_sources) ORDER BY visits DESC`),
@@ -328,6 +340,10 @@ async function dashboard(env) {
     q(`SELECT sqi,excluded_pages AS excludedPages,searchable_pages AS searchablePages,fatal,critical,possible,recommendation,updated_at AS updatedAt FROM seo_summary WHERE id=1`),
     q(`SELECT date,pages_in_search AS pagesInSearch FROM seo_index_history ORDER BY date`),
     q(`SELECT code,severity,state,last_update AS lastUpdate FROM seo_problems ORDER BY CASE severity WHEN 'FATAL' THEN 1 WHEN 'CRITICAL' THEN 2 WHEN 'POSSIBLE_PROBLEM' THEN 3 ELSE 4 END, code`),
+    q(`SELECT date,clicks,impressions,ctr,position FROM gsc_daily ORDER BY date`),
+    q(`SELECT query,clicks,impressions,ctr,position FROM gsc_queries ORDER BY impressions DESC LIMIT 1000`),
+    q(`SELECT page,clicks,impressions,ctr,position FROM gsc_pages ORDER BY impressions DESC LIMIT 1000`),
+    q(`SELECT device,clicks,impressions,ctr,position FROM gsc_devices ORDER BY impressions DESC`),
     q(`SELECT channel,campaign_id AS campaignId,name,status,native_state AS nativeState,updated_at AS updatedAt FROM ad_campaign_meta ORDER BY channel,name`),
     q(`SELECT channel,campaign_id AS campaignId,name,date,impressions,clicks,spend,conversions,bounce_rate AS bounceRate,avg_pageviews AS avgPageviews FROM ad_campaign_daily ORDER BY date,channel,name`),
     q(`SELECT channel,title,date,reach,views,reactions,comments,shares,clicks,followers,followers_delta AS followersDelta,post_id AS postId,post_url AS postUrl,media_type AS mediaType,text_length AS textLength FROM social_posts ORDER BY date DESC`),
@@ -352,16 +368,16 @@ async function dashboard(env) {
   const resolved = Object.fromEntries((resolvedRows || []).map(x => [x.source, x]));
   return json({
     site, sitePeriods, sources, pages, searchEngines, searchPhrases, utm, devices, regions, goals, seo,
-    seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems,
+    seoSummary: seoSummaryRows[0] || null, seoIndex, seoProblems, gscDaily, gscQueries, gscPages, gscDevices,
     adsMeta, adsDaily, social, socialDaily, email, emailLinks, businessDaily, businessQueries, workspace, syncLog,
-    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping, ybusinessCounterId: settings.ybusiness_profile_url ? (settings.ybusiness_counter_id || resolved.ybusiness?.externalId || null) : null, ybusinessProfileUrl: settings.ybusiness_profile_url || 'https://yandex.ru/sprav/173574593150/' }
+    meta: { metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.externalId || null, webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.externalId || null, gscProperty: env.GOOGLE_SEARCH_CONSOLE_PROPERTY || resolved.searchconsole?.externalId || null, vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.externalId || null, siteUrl: env.SITE_URL || null, goalMapping, ybusinessCounterId: settings.ybusiness_profile_url ? (settings.ybusiness_counter_id || resolved.ybusiness?.externalId || null) : null, ybusinessProfileUrl: settings.ybusiness_profile_url || 'https://yandex.ru/sprav/173574593150/' }
   });
 }
 
 
 async function rangeAnalytics(url, env) {
   const { from, to, days } = validateRange(url.searchParams.get('from'), url.searchParams.get('to'));
-  const result = { from, to, days, metrika: null, webmaster: null, warnings: [] };
+  const result = { from, to, days, metrika: null, webmaster: null, searchConsole: null, warnings: [] };
 
   if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) {
     try {
@@ -373,6 +389,10 @@ async function rangeAnalytics(url, env) {
   if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) {
     try { result.webmaster = await webmasterRangeData(env, from, to); }
     catch (err) { result.warnings.push(`Вебмастер: ${err?.message || err}`); }
+  }
+  if (hasGoogleSearchConsoleCredentials(env)) {
+    try { result.searchConsole = await searchConsoleRangeData(env, from, to); }
+    catch (err) { result.warnings.push(`Google Search Console: ${err?.message || err}`); }
   }
   return json(result, 200);
 }
@@ -452,12 +472,121 @@ async function webmasterRangeData(env, from, to) {
   return { hostId, seo };
 }
 
+
+/* -------------------- GOOGLE SEARCH CONSOLE -------------------- */
+
+function hasGoogleSearchConsoleCredentials(env) {
+  return Boolean(env.GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON || (env.GOOGLE_SEARCH_CONSOLE_EMAIL && env.GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY));
+}
+
+function googleServiceAccount(env) {
+  if (env.GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON) {
+    try {
+      const parsed = JSON.parse(env.GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON);
+      if (!parsed.client_email || !parsed.private_key) throw new Error('В JSON нет client_email/private_key');
+      return { email: parsed.client_email, privateKey: parsed.private_key };
+    } catch (e) { throw new Error(`Некорректный GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON: ${e.message}`); }
+  }
+  if (env.GOOGLE_SEARCH_CONSOLE_EMAIL && env.GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY) {
+    return { email: env.GOOGLE_SEARCH_CONSOLE_EMAIL, privateKey: env.GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY };
+  }
+  throw new Error('Не настроены учётные данные Google Search Console');
+}
+
+function base64UrlFromBytes(bytes) {
+  let bin = '';
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i=0;i<arr.length;i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function base64UrlJson(value) { return base64UrlFromBytes(new TextEncoder().encode(JSON.stringify(value))); }
+function pemPkcs8ToArrayBuffer(pem) {
+  const clean = String(pem||'').replace(/\\n/g,'\n').replace(/-----BEGIN PRIVATE KEY-----/g,'').replace(/-----END PRIVATE KEY-----/g,'').replace(/\s+/g,'');
+  const bin = atob(clean); const bytes = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer;
+}
+
+async function getGoogleAccessToken(env) {
+  const cacheKey='google_search_console_access_token';
+  const cached=await readIntegrationCache(env,cacheKey).catch(()=>null);
+  if(cached?.accessToken && num(cached.expiresAt)>Date.now()+60000) return cached.accessToken;
+  const sa=googleServiceAccount(env), now=Math.floor(Date.now()/1000);
+  const unsigned=`${base64UrlJson({alg:'RS256',typ:'JWT'})}.${base64UrlJson({iss:sa.email,scope:'https://www.googleapis.com/auth/webmasters.readonly',aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600})}`;
+  const key=await crypto.subtle.importKey('pkcs8',pemPkcs8ToArrayBuffer(sa.privateKey),{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['sign']);
+  const sig=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',key,new TextEncoder().encode(unsigned));
+  const assertion=`${unsigned}.${base64UrlFromBytes(sig)}`;
+  const res=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion})});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.access_token) throw new Error(`OAuth Google ${res.status}: ${data.error_description||data.error||'не удалось получить access token'}`);
+  await writeIntegrationCache(env,cacheKey,{accessToken:data.access_token},Date.now()+Math.max(60,Number(data.expires_in||3600)-120)*1000);
+  return data.access_token;
+}
+
+async function resolveGoogleSearchConsoleProperty(env, token) {
+  if (env.GOOGLE_SEARCH_CONSOLE_PROPERTY) return String(env.GOOGLE_SEARCH_CONSOLE_PROPERTY);
+  const saved=await env.DB.prepare(`SELECT external_id AS externalId FROM resolved_integrations WHERE source='searchconsole'`).first().catch(()=>null);
+  if(saved?.externalId) return saved.externalId;
+  const data=await apiGet('https://www.googleapis.com/webmasters/v3/sites',{Authorization:`Bearer ${token}`});
+  const entries=Array.isArray(data?.siteEntry)?data.siteEntry:[];
+  if(!entries.length) throw new Error('Сервисному аккаунту не выдан доступ ни к одному ресурсу Search Console');
+  const site=String(env.SITE_URL||'').trim(); let host='';
+  try{host=new URL(site).hostname.replace(/^www\./,'');}catch{}
+  const score=e=>{const u=String(e.siteUrl||'');if(host&&u===`sc-domain:${host}`)return 100;if(site&&u===site)return 95;if(host&&u.includes(host))return 80;return 0;};
+  const best=entries.slice().sort((a,b)=>score(b)-score(a))[0];
+  if(!best?.siteUrl||score(best)===0) throw new Error(`Не удалось автоматически выбрать ресурс Search Console. Доступны: ${entries.map(x=>x.siteUrl).slice(0,5).join(', ')}`);
+  await saveResolved(env,'searchconsole',best.siteUrl,best.siteUrl);
+  return best.siteUrl;
+}
+
+async function gscQuery(env, token, property, body) {
+  const url=`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(property)}/searchAnalytics/query`;
+  const res=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(`Search Console ${res.status}: ${data?.error?.message||'ошибка запроса'}`);
+  return data;
+}
+
+async function searchConsoleRangeData(env, from, to) {
+  const token=await getGoogleAccessToken(env), property=await resolveGoogleSearchConsoleProperty(env,token);
+  const common={startDate:from,endDate:to,rowLimit:25000};
+  const [dailyRaw,queryRaw,pageRaw,deviceRaw]=await Promise.all([
+    gscQuery(env,token,property,{...common,dimensions:['date']}),
+    gscQuery(env,token,property,{...common,dimensions:['query']}),
+    gscQuery(env,token,property,{...common,dimensions:['page']}),
+    gscQuery(env,token,property,{...common,dimensions:['device']})
+  ]);
+  const mapRows=(raw,key)=> (raw.rows||[]).map(r=>({[key]:String(r.keys?.[0]||''),clicks:num(r.clicks),impressions:num(r.impressions),ctr:num(r.ctr)*100,position:num(r.position)})).filter(x=>x[key]);
+  const daily=mapRows(dailyRaw,'date'), queries=mapRows(queryRaw,'query'), pages=mapRows(pageRaw,'page'), devices=mapRows(deviceRaw,'device');
+  const clicks=sumSimple(daily,'clicks'), impressions=sumSimple(daily,'impressions');
+  const weightedPosition=impressions?daily.reduce((a,x)=>a+num(x.position)*num(x.impressions),0)/impressions:0;
+  return {property,daily,queries,pages,devices,summary:{clicks,impressions,ctr:impressions?clicks/impressions*100:0,position:weightedPosition}};
+}
+function sumSimple(arr,key){return (arr||[]).reduce((a,x)=>a+num(x?.[key]),0);}
+
+async function syncSearchConsole(env) {
+  const end=new Date(); end.setUTCDate(end.getUTCDate()-1); const start=new Date(end); start.setUTCDate(start.getUTCDate()-89);
+  try{
+    const data=await searchConsoleRangeData(env,dateOnly(start),dateOnly(end));
+    await env.DB.prepare('DELETE FROM gsc_daily').run();
+    for(const x of data.daily) await env.DB.prepare(`INSERT INTO gsc_daily(date,clicks,impressions,ctr,position,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(x.date,x.clicks,x.impressions,x.ctr,x.position).run();
+    await env.DB.prepare('DELETE FROM gsc_queries').run();
+    for(const x of data.queries.slice(0,5000)) await env.DB.prepare(`INSERT INTO gsc_queries(query,clicks,impressions,ctr,position,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(x.query,x.clicks,x.impressions,x.ctr,x.position).run();
+    await env.DB.prepare('DELETE FROM gsc_pages').run();
+    for(const x of data.pages.slice(0,5000)) await env.DB.prepare(`INSERT INTO gsc_pages(page,clicks,impressions,ctr,position,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(x.page,x.clicks,x.impressions,x.ctr,x.position).run();
+    await env.DB.prepare('DELETE FROM gsc_devices').run();
+    for(const x of data.devices) await env.DB.prepare(`INSERT INTO gsc_devices(device,clicks,impressions,ctr,position,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(x.device,x.clicks,x.impressions,x.ctr,x.position).run();
+    await saveResolved(env,'searchconsole',data.property,data.property);
+    const msg=`Google Search Console: ${data.queries.length} запросов, ${Math.round(data.summary.clicks)} кликов, ${Math.round(data.summary.impressions)} показов`;
+    await logSync(env,'searchconsole','ok',msg); return {ok:true,message:msg};
+  }catch(e){await logSync(env,'searchconsole','error',String(e.message||e).slice(0,700));throw e;}
+}
+
 async function syncConfigured(env) {
   await ensureExtendedSchema(env);
   const jobs = [];
   const add = (source, fn) => jobs.push([source, fn]);
   if (env.YANDEX_TOKEN && (env.METRIKA_COUNTER_ID || env.SITE_URL)) add('metrika', () => syncMetrika(env));
   if (env.YANDEX_TOKEN && (env.WEBMASTER_HOST_ID || env.SITE_URL)) add('webmaster', () => syncWebmaster(env));
+  if (hasGoogleSearchConsoleCredentials(env)) add('searchconsole', () => syncSearchConsole(env));
   if (env.YANDEX_TOKEN) add('ybusiness', () => syncYandexBusiness(env));
   if (env.YANDEX_TOKEN) add('direct', () => syncDirect(env));
   if (env.VK_ADS_TOKEN || (env.VK_ADS_CLIENT_ID && env.VK_ADS_CLIENT_SECRET)) add('vkads', () => syncVkAds(env));
@@ -477,6 +606,7 @@ async function syncSource(source, env) {
   await ensureExtendedSchema(env);
   if (source === 'metrika') return syncMetrika(env);
   if (source === 'webmaster') return syncWebmaster(env);
+  if (source === 'searchconsole') return syncSearchConsole(env);
   if (source === 'ybusiness') return syncYandexBusiness(env);
   if (source === 'direct') return syncDirect(env);
   if (source === 'vkads') return syncVkAds(env);
