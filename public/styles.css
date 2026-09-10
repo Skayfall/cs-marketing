@@ -109,3 +109,23 @@ body{font-size:14px}.app-shell{grid-template-columns:238px minmax(0,1fr)}
 .google-search-console-panel{border-color:#d9e5ff;background:linear-gradient(180deg,#fff,#fbfdff)}.gsc-metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}.gsc-mini-metric{padding:12px 13px;border:1px solid var(--line);border-radius:11px;background:#fff}.gsc-mini-metric span{display:block;font-size:10px;color:var(--muted)}.gsc-mini-metric strong{display:block;font-size:21px;margin-top:4px}.gsc-empty{grid-column:1/-1;padding:16px;border:1px dashed #cfd9ea;border-radius:12px;background:#f8fbff}.gsc-empty strong{display:block;font-size:12px}.gsc-empty span{display:block;font-size:10.5px;color:var(--muted);margin-top:4px}.gsc-layout{align-items:stretch}.chart-wrap.medium{height:300px}
 @media(max-width:980px){.podium{grid-template-columns:1fr}.method-grid{grid-template-columns:repeat(2,1fr)}.performance-hero{align-items:flex-start;flex-direction:column}.performance-score-note{min-width:0;width:100%}.gsc-metric-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:680px){.method-grid,.gsc-metric-grid{grid-template-columns:1fr}.performance-hero h3{font-size:22px}}
+
+/* v2.8 — restored Yandex Webmaster analytics + funnel-weighted effectiveness */
+.span-12{grid-column:1/-1}
+.performance-layout>.span-12{width:100%;min-width:0}
+.performance-layout>.span-12 .chart-wrap{height:360px;min-width:0}
+.yandex-webmaster-panel{border-color:#ead7a2;background:linear-gradient(180deg,#fff,#fffdf7)}
+.source-metric-grid{margin-bottom:18px}
+.yandex-indexation-layout{align-items:stretch;border-top:1px solid var(--line);padding-top:16px}
+.source-subhead{margin-bottom:8px}.source-subhead strong{display:block;font-size:13px}
+.compact-chart{height:220px}
+.indexation-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;height:100%;align-content:start}
+.indexation-stat{padding:14px;border:1px solid var(--line);border-radius:11px;background:#fff}
+.indexation-stat span{display:block;font-size:10px;color:var(--muted)}
+.indexation-stat strong{display:block;font-size:24px;letter-spacing:-.04em;margin-top:4px}
+.seo-source-divider{display:flex;align-items:center;gap:12px;margin:18px 2px 12px;color:#8b6a1f;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.seo-source-divider:before,.seo-source-divider:after{content:"";height:1px;background:#eadfbd;flex:1}
+.seo-source-divider span{flex:none}
+.seo-source-divider.google-divider{color:#5476a8}.seo-source-divider.google-divider:before,.seo-source-divider.google-divider:after{background:#d9e5ff}
+@media(max-width:980px){.span-12{grid-column:auto}.indexation-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.performance-layout>.span-12 .chart-wrap{height:320px}}
+@media(max-width:680px){.indexation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.performance-layout>.span-12 .chart-wrap{height:300px}}
