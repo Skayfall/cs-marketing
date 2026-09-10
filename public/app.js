@@ -388,7 +388,30 @@
     const maxShows=Math.max(1,...opp.map(x=>num(x.shows)));const list=document.getElementById('seoPotentialList');if(list)list.innerHTML=opp.length?opp.map((q,i)=>`<div class="opportunity-row"><div class="opp-rank">${i+1}</div><div class="opp-copy"><strong>${esc(q.query)}</strong><span>${fmt.format(q.shows)} показов · позиция ${num(q.position).toFixed(1)} · CTR ${pct(q.ctr)}</span><i><b style="width:${clamp(num(q.shows)/maxShows*100,6,100)}%"></b></i></div><div class="opp-signal">${pill(q.position<=10?'Дожать ТОП-10':'Поднять позицию',q.position<=10?'good':'warn')}</div></div>`).join(''):'<div class="empty-state">Недостаточно данных по запросам.</div>';
     renderSeoTable();
   }
-  function renderSeoTable(){const q=(document.getElementById('seoSearch')?.value||'').toLowerCase(),rows=(state.seo||[]).filter(x=>x.query.toLowerCase().includes(q)).slice(0,300);document.getElementById('seoTable').innerHTML=rows.map(x=>{const [l,c]=seoSignal(x);return `<tr><td>${esc(x.query)}</td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${num(x.position).toFixed(1)}</td><td>${x.clickPosition?num(x.clickPosition).toFixed(1):'—'}</td><td class="${x.delta>0?'positive':x.delta<0?'negative':''}">${x.delta>0?'+':''}${num(x.delta).toFixed(1)}</td><td>${pill(l,c)}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty-cell">Нет запросов.</td></tr>';}
+  let seoTableExpanded=false;
+  const SEO_TABLE_COMPACT_LIMIT=8;
+  function renderSeoTable(){
+    const search=(document.getElementById('seoSearch')?.value||'').trim().toLowerCase();
+    const allRows=(state.seo||[]).filter(x=>String(x.query||'').toLowerCase().includes(search)).slice(0,300);
+    const compact=!search&&!seoTableExpanded&&allRows.length>SEO_TABLE_COMPACT_LIMIT;
+    const rows=compact?allRows.slice(0,SEO_TABLE_COMPACT_LIMIT):allRows;
+    const table=document.getElementById('seoTable');
+    if(table)table.innerHTML=rows.map(x=>{const [l,c]=seoSignal(x);return `<tr><td>${esc(x.query)}</td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${num(x.position).toFixed(1)}</td><td>${x.clickPosition?num(x.clickPosition).toFixed(1):'—'}</td><td class="${x.delta>0?'positive':x.delta<0?'negative':''}">${x.delta>0?'+':''}${num(x.delta).toFixed(1)}</td><td>${pill(l,c)}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty-cell">Нет запросов.</td></tr>';
+    const toggle=document.getElementById('seoTableToggle');
+    if(toggle){
+      const canToggle=!search&&allRows.length>SEO_TABLE_COMPACT_LIMIT;
+      toggle.hidden=!canToggle;
+      toggle.textContent=seoTableExpanded?`Свернуть до ${SEO_TABLE_COMPACT_LIMIT}`:`Показать все (${fmt.format(allRows.length)})`;
+      toggle.setAttribute('aria-expanded',seoTableExpanded?'true':'false');
+    }
+    const summary=document.getElementById('seoTableSummary');
+    if(summary){
+      if(!allRows.length)summary.textContent='';
+      else if(search)summary.textContent=`Найдено запросов: ${fmt.format(allRows.length)}`;
+      else if(compact)summary.textContent=`Показано ${SEO_TABLE_COMPACT_LIMIT} из ${fmt.format(allRows.length)} запросов`;
+      else summary.textContent=`Показано запросов: ${fmt.format(allRows.length)}`;
+    }
+  }
 
   function campaignPurpose(x){const n=String(x?.name||'').toLowerCase();if(/telegram|телеграм|t\.me/.test(n))return 'Продвижение Telegram';if(/dzen|дзен/.test(n))return 'Продвижение Дзена';if(/(^|\s)max(\s|$)|макс|max\.ru/.test(n))return 'Продвижение MAX';if(/товар|product|смарт.?баннер/.test(n))return 'Товарная';if(/ретарг|remarket/.test(n))return 'Ретаргетинг';if(x?.channel==='VK Реклама')return 'VK Ads';return 'Сайт / поиск';}
   function filterAdRows(rows,filter){if(filter==='Все')return rows;if(filter==='Яндекс Директ'||filter==='VK Реклама')return rows.filter(x=>x.channel===filter);const map={Telegram:'Продвижение Telegram','Дзен':'Продвижение Дзена',MAX:'Продвижение MAX'};return rows.filter(x=>campaignPurpose(x)===map[filter]);}
@@ -555,6 +578,7 @@
   document.getElementById('mobileMenuBtn').addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
 
   document.getElementById('seoSearch').addEventListener('input',renderSeoTable);
+  document.getElementById('seoTableToggle')?.addEventListener('click',()=>{seoTableExpanded=!seoTableExpanded;renderSeoTable();});
   document.getElementById('syncBtn').addEventListener('click',syncAll);
   document.getElementById('syncAllBtn').addEventListener('click',syncAll);
   document.getElementById('quickReportBtn').addEventListener('click',()=>{navigate('reports');renderReports()});
