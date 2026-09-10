@@ -1,4 +1,4 @@
-// CS Marketing by skayfall v2.6 — VK service/client token support + server-first marketing OS
+// CS Marketing by skayfall v2.8 — Yandex Webmaster restored + funnel-weighted channel effectiveness
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
