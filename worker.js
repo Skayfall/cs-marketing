@@ -45,6 +45,7 @@ async function handleApi(request, env, ctx, url) {
   await ensureExtendedSchema(env);
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
+  if (request.method === 'GET' && url.pathname === '/api/webmaster/search-diagnostics') return webmasterSearchDiagnostics(env);
   if (request.method === 'GET' && url.pathname === '/api/metrika/counters') return listMetrikaCounters(env);
   if (request.method === 'GET' && url.pathname === '/api/retail/reports') return retailPeriodAnalytics(url, env);
   if (request.method === 'POST' && url.pathname === '/api/retail/reports/import/start') return retailPeriodStart(request, env);
@@ -878,6 +879,41 @@ async function replaceSimpleDimension(env, table, periodKey, rows) {
 
 /* -------------------- YANDEX WEBMASTER -------------------- */
 
+// Read-only diagnostic; returns aggregate counts and time ranges, never credentials or query text.
+async function webmasterSearchDiagnostics(env) {
+  if (!env.YANDEX_TOKEN) return json({error:'YANDEX_TOKEN не настроен'},400);
+  const headers={Authorization:`OAuth ${env.YANDEX_TOKEN}`};
+  const user=await apiGet('https://api.webmaster.yandex.net/v4/user',headers);
+  const uid=user.user_id||user.userId;
+  if(!uid) return json({error:'Вебмастер не вернул user_id'},502);
+  const hostId=await resolveWebmasterHostId(env,headers,uid);
+  const root=`https://api.webmaster.yandex.net/v4/user/${uid}/hosts/${encodeURIComponent(hostId)}`;
+  const end=new Date(),start=new Date(end);start.setUTCDate(start.getUTCDate()-29);
+  const from=dateOnly(start),to=dateOnly(end);
+  const popular=`${root}/search-queries/popular`;
+  const indicators=['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'];
+  const checks=[
+    {name:'popular_30_days',url:withParams(popular,{order_by:'TOTAL_SHOWS',query_indicator:indicators,date_from:from,date_to:to,limit:500})},
+    {name:'popular_default_week',url:withParams(popular,{order_by:'TOTAL_SHOWS',query_indicator:indicators,limit:500})},
+    {name:'all_history_30_days',url:withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS'],date_from:from,date_to:to})}
+  ];
+  const results=await Promise.all(checks.map(async ({name,url})=>{
+    try{
+      const data=await apiGet(url,headers);
+      if(name.startsWith('popular'))return {name,ok:true,rows:Array.isArray(data.queries)?data.queries.length:null,
+        count:Number.isFinite(Number(data.count))?Number(data.count):null,
+        actualFrom:data.date_from||null,actualTo:data.date_to||null,
+        sampleIndicatorKeys:Array.isArray(data.queries)&&data.queries[0]?Object.keys(data.queries[0].indicators||{}):[]};
+      const indicators=data.indicators||{},shows=Array.isArray(indicators.TOTAL_SHOWS)?indicators.TOTAL_SHOWS:[],
+        clicks=Array.isArray(indicators.TOTAL_CLICKS)?indicators.TOTAL_CLICKS:[];
+      return {name,ok:true,daysWithShows:shows.length,daysWithClicks:clicks.length,
+        impressions:shows.reduce((a,x)=>a+num(x.value),0),clicks:clicks.reduce((a,x)=>a+num(x.value),0),
+        firstDay:shows[0]?.date||null,lastDay:shows[shows.length-1]?.date||null};
+    }catch(e){return {name,ok:false,error:String(e?.message||e).slice(0,350)};}
+  }));
+  return json({site:env.SITE_URL||null,hostId,requestedFrom:from,requestedTo:to,checks:results});
+}
+
 async function syncWebmaster(env) {
   if (!env.YANDEX_TOKEN) throw new Error('Добавьте YANDEX_TOKEN в Cloudflare Runtime Secrets.');
   const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
@@ -917,7 +953,10 @@ async function syncWebmaster(env) {
   }
 
   const prevByText = new Map((prev.queries || []).map(q => [q.query_text, q]));
-  await env.DB.prepare('DELETE FROM seo_queries').run();
+  // Empty popular-query responses must not erase the last known SEO search terms.
+  if (Array.isArray(current.queries) && current.queries.length) {
+    await env.DB.prepare('DELETE FROM seo_queries').run();
+  }
   for (const q of current.queries || []) {
     const ind = q.indicators || {};
     const shows = num(ind.TOTAL_SHOWS), clicks = num(ind.TOTAL_CLICKS), position = num(ind.AVG_SHOW_POSITION), clickPosition = num(ind.AVG_CLICK_POSITION);
@@ -946,6 +985,14 @@ async function syncWebmaster(env) {
     const date = String(item.date || '').slice(0,10); if (!date) continue;
     await env.DB.prepare(`INSERT INTO seo_index_history(date,pages_in_search) VALUES(?,?) ON CONFLICT(date) DO UPDATE SET pages_in_search=excluded.pages_in_search`)
       .bind(date,num(item.value)).run();
+  }
+
+  if (!(current.queries || []).length) {
+    const rawCount=Number.isFinite(Number(current.count))?Number(current.count):'не указан';
+    const dateInfo=[current.date_from||dateOnly(start),current.date_to||dateOnly(end)].join('–');
+    const message=`Вебмастер: индексация и диагностика обновлены, но API popular вернул 0 запросов (count=${rawCount}; период=${dateInfo}). Ранее сохранённые запросы не удалены. Проверка: /api/webmaster/search-diagnostics`;
+    await logSync(env,'webmaster','partial',message);
+    return {message,partial:true};
   }
 
   await logSync(env, 'webmaster', 'ok', `Вебмастер: ${current.queries?.length || 0} запросов, ${Object.keys(diagnostics.problems || {}).length} диагностик; товарные URL: ${productUrlsAvailable ? productUrlAnalytics.length + ' дневных строк' : 'дополнительная аналитика пока недоступна'}`);
