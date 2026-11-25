@@ -176,11 +176,14 @@ function readCookie(header, name) {
 
 /* -------------------- SCHEMA -------------------- */
 
-let schemaPromise;
 async function ensureExtendedSchema(env) {
-  if (schemaPromise) return schemaPromise;
-  schemaPromise = (async () => {
-    const creates = [
+  // Cloudflare request-scoped I/O promises must never be reused across requests.
+  // Check the persisted schema instead of caching a promise in module scope.
+  const latestSchema = await env.DB.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='retail_period_items'"
+  ).first().catch(() => null);
+  if (latestSchema) return;
+  const creates = [
       `CREATE TABLE IF NOT EXISTS daily_site_metrics (date TEXT PRIMARY KEY, visits INTEGER DEFAULT 0, users INTEGER DEFAULT 0, pageviews INTEGER DEFAULT 0, bounce_rate REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, conversions REAL DEFAULT 0, new_visitors REAL DEFAULT 0, email_clicks REAL DEFAULT 0, form_submits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS site_period_summary (period_days INTEGER PRIMARY KEY, visits REAL DEFAULT 0, users REAL DEFAULT 0, pageviews REAL DEFAULT 0, bounce_rate REAL DEFAULT 0, depth REAL DEFAULT 0, duration REAL DEFAULT 0, new_visitors REAL DEFAULT 0, conversions REAL DEFAULT 0, email_clicks REAL DEFAULT 0, form_submits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS traffic_sources (period_key TEXT NOT NULL, name TEXT NOT NULL, visits INTEGER DEFAULT 0, users INTEGER DEFAULT 0, bounce REAL DEFAULT 0, conversions REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(period_key,name))`,
@@ -241,8 +244,6 @@ async function ensureExtendedSchema(env) {
       `ALTER TABLE social_posts ADD COLUMN text_length REAL DEFAULT 0`
     ];
     for (const sql of alters) await env.DB.prepare(sql).run().catch(() => {});
-  })();
-  try { await schemaPromise; } catch (e) { schemaPromise = null; throw e; }
 }
 
 /* -------------------- API DATA -------------------- */
