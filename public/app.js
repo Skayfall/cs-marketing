@@ -99,7 +99,7 @@
   }
   async function checkVersion(){
     try{const {version}=await fetchJson('/api/version');
-      if(version&&version!=='2.10.0'&&document.visibilityState==='visible'&&!window.CSRetail?.isImporting?.()){
+      if(version&&version!=='2.10.1'&&document.visibilityState==='visible'&&!window.CSRetail?.isImporting?.()){
         showAlert(`Выпущена новая версия ${version}. Обновляю интерфейс…`);
         window.location.reload();
       }
