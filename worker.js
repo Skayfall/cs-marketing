@@ -498,6 +498,54 @@ function yandexWeightedPosition(positionSeries, weightSeries) {
   return denominator>0 ? numerator/denominator : null;
 }
 
+// Modern Webmaster Query Analytics (last two weeks), used when legacy popular queries are empty.
+async function webmasterRecentQuerySample(root,headers,from,to) {
+  const cutoff=dateOnly(new Date(Date.now()-13*86400000));
+  const effectiveFrom=from>cutoff?from:cutoff;
+  if(to<effectiveFrom) return {seo:[],meta:{source:'unavailable',from:effectiveFrom,to,comparisonAvailable:false,reason:'Выбранный период не пересекается с последними 14 днями мониторинга'}};
+  const endpoint=`${root}/query-analytics/list`;
+  const requestBody={offset:0,limit:300,device_type_indicator:'ALL',search_location:'WEB_LOCATION',text_indicator:'QUERY'};
+  const response=await fetch(endpoint,{method:'POST',
+    headers:{...headers,'Content-Type':'application/json; charset=UTF-8'},
+    body:JSON.stringify(requestBody),signal:AbortSignal.timeout(15000)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(`Query Analytics HTTP ${response.status}: ${data.error_message||data.error||'нет описания ошибки'}`);
+  const all=Array.isArray(data.text_indicator_to_statistics)?data.text_indicator_to_statistics:[];
+  const seo=[];
+  let firstDay=null,lastDay=null;
+  for(const item of all){
+    if(String(item?.text_indicator?.type||'').toUpperCase()!=='QUERY')continue;
+    const query=String(item?.text_indicator?.value||'').trim();
+    if(!query)continue;
+    const dayMap=new Map();
+    for(const row of item.statistics||[]){
+      const date=String(row?.date||'').slice(0,10);
+      if(date<effectiveFrom||date>to)continue;
+      const field=String(row?.field||'').toUpperCase(),val=Number(row?.value);
+      if(!Number.isFinite(val))continue;
+      let day=dayMap.get(date);
+      if(!day){day={shows:0,clicks:0,position:null};dayMap.set(date,day);}
+      if(field==='IMPRESSIONS')day.shows+=Math.max(0,val);
+      else if(field==='CLICKS')day.clicks+=Math.max(0,val);
+      else if(field==='POSITION' && val>0)day.position=val;
+    }
+    const dates=[...dayMap.keys()].sort();
+    if(!dates.length)continue;
+    const shows=dates.reduce((a,d)=>a+dayMap.get(d).shows,0),clicks=dates.reduce((a,d)=>a+dayMap.get(d).clicks,0);
+    if(shows<=0 && clicks<=0)continue;
+    let weighted=0,weight=0;
+    for(const day of dayMap.values()) if(Number.isFinite(day.position)&&day.shows>0){weighted+=day.position*day.shows;weight+=day.shows;}
+    if(firstDay===null||dates[0]<firstDay)firstDay=dates[0];
+    if(lastDay===null||dates[dates.length-1]>lastDay)lastDay=dates[dates.length-1];
+    seo.push({query,shows,clicks,ctr:shows?clicks/shows*100:0,
+      position:weight?weighted/weight:0,clickPosition:0,delta:null});
+  }
+  seo.sort((a,b)=>b.shows-a.shows||b.clicks-a.clicks);
+  return {seo,meta:{source:'query-analytics',from:firstDay||effectiveFrom,to:lastDay||to,
+    comparisonAvailable:false,returnedQueries:seo.length,totalCount:Number.isFinite(Number(data.count))?Number(data.count):null,
+    note:'Выборка запросов мониторинга за последние 14 дней; сравнение с предыдущим месячным периодом недоступно'}};
+}
+
 async function webmasterRangeData(env, from, to) {
   const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
   const user = await apiGet('https://api.webmaster.yandex.net/v4/user', headers);
@@ -516,7 +564,17 @@ async function webmasterRangeData(env, from, to) {
     apiGet(withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'],date_from:from,date_to:to}),headers).catch(()=>null)
   ]);
   const prevMap=new Map((prev.queries||[]).map(q=>[q.query_text,q]));
-  const seo=(cur.queries||[]).map(q=>{const ind=q.indicators||{},shows=num(ind.TOTAL_SHOWS),clicks=num(ind.TOTAL_CLICKS),position=num(ind.AVG_SHOW_POSITION),clickPosition=num(ind.AVG_CLICK_POSITION),prevPos=num(prevMap.get(q.query_text)?.indicators?.AVG_SHOW_POSITION);return {query:q.query_text,shows,clicks,ctr:shows?clicks/shows*100:0,position,clickPosition,delta:prevPos&&position?prevPos-position:0};});
+  let seo=(cur.queries||[]).map(q=>{const ind=q.indicators||{},shows=num(ind.TOTAL_SHOWS),clicks=num(ind.TOTAL_CLICKS),position=num(ind.AVG_SHOW_POSITION),clickPosition=num(ind.AVG_CLICK_POSITION),prevPos=num(prevMap.get(q.query_text)?.indicators?.AVG_SHOW_POSITION);return {query:q.query_text,shows,clicks,ctr:shows?clicks/shows*100:0,position,clickPosition,delta:prevPos&&position?prevPos-position:null};});
+  let seoMeta={source:'popular',from,to,comparisonAvailable:true,returnedQueries:seo.length};
+  if(!seo.length){
+    try {
+      const fallback=await webmasterRecentQuerySample(root,headers,from,to);
+      seo=fallback.seo;
+      seoMeta=fallback.meta;
+    }catch(e){
+      seoMeta={source:'unavailable',from,to,comparisonAvailable:false,reason:String(e?.message||e).slice(0,240)};
+    }
+  }
   const searchIndicators=allHistory?.indicators||{};
   const seriesFor=key=>(Array.isArray(searchIndicators[key])?searchIndicators[key]:[])
     .filter(row=>typeof row?.date==='string'&&row.date.slice(0,10)>=from&&row.date.slice(0,10)<=to)
@@ -532,9 +590,13 @@ async function webmasterRangeData(env, from, to) {
     averagePositionDays:positionSeries.length,averageClickPositionDays:clickPositionSeries.length,
     from,to,showDays:showsSeries.length,clickDays:clicksSeries.length,
     lastDay:showsSeries.at(-1)?.date||clicksSeries.at(-1)?.date||null,
-    source:'search-queries/all/history'
+    source:'search-queries/all/history',
+    daily:[...new Set([...showsSeries.map(r=>r.date),...clicksSeries.map(r=>r.date),...positionSeries.map(r=>r.date)])].sort()
+      .map(date=>({date,shows:showsSeries.find(r=>r.date===date)?.value??0,
+        clicks:clicksSeries.find(r=>r.date===date)?.value??0,
+        position:positionSeries.find(r=>r.date===date)?.value??null}))
   };
-  return { hostId, seo, popularCount:Number.isFinite(Number(cur.count))?Number(cur.count):seo.length, totals };
+  return { hostId, seo, seoMeta, popularCount:Number.isFinite(Number(cur.count))?Number(cur.count):seo.length, totals };
 }
 
 
