@@ -38,7 +38,7 @@
 
   const blank = () => ({
     site:[], sitePeriods:{}, sources:[], pages:[], searchEngines:[], searchPhrases:[], utm:[], devices:[], regions:[], goals:[],
-    seo:[], seoSummary:null, webmasterTotals:null, seoIndex:[], seoProblems:[], gscDaily:[], gscQueries:[], gscPages:[], gscDevices:[],
+    seo:[], seoSummary:null, webmasterTotals:null, webmasterSeoMeta:null, seoIndex:[], seoProblems:[], gscDaily:[], gscQueries:[], gscPages:[], gscDevices:[],
     adsMeta:[], adsDaily:[], social:[], socialDaily:[], email:[], emailLinks:[], businessDaily:[], businessQueries:[], workspace:[], syncLog:[],
     meta:{metrikaCounterId:null,webmasterHostId:null,gscProperty:null,vkGroupId:null,siteUrl:null,goalMapping:{email:[],forms:[]}}
   });
@@ -196,6 +196,7 @@
       }
       if(Array.isArray(d.webmaster?.seo)&&d.webmaster.seo.length)state.seo=d.webmaster.seo;
       state.webmasterTotals=d.webmaster?.totals||null;
+      state.webmasterSeoMeta=d.webmaster?.seoMeta||null;
       if(d.searchConsole){
         if(Array.isArray(d.searchConsole.daily)&&d.searchConsole.daily.length)state.gscDaily=d.searchConsole.daily;
         if(Array.isArray(d.searchConsole.queries)&&d.searchConsole.queries.length)state.gscQueries=d.searchConsole.queries;
@@ -500,12 +501,65 @@
     const indexFallback=indexRows.length?indexRows:(state.seoIndex||[]).slice(-90);
     if(indexFallback.length){chart('yandexIndexationChart','line',{labels:indexFallback.map(x=>dateRu(x.date)),datasets:[{label:'Страниц в поиске',data:indexFallback.map(x=>num(x.pagesInSearch)),borderColor:'#6657f6',backgroundColor:'rgba(102,87,246,.08)',fill:true,tension:.25}]},{plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:false,ticks:{precision:0}}}});}else destroyChart('yandexIndexationChart');
     const indexSummary=document.getElementById('yandexIndexationSummary');if(indexSummary)indexSummary.innerHTML=s?`<div class="indexation-stat"><span>В поиске</span><strong>${fmt.format(s.searchablePages||0)}</strong></div><div class="indexation-stat"><span>Исключено</span><strong>${fmt.format(s.excludedPages||0)}</strong></div><div class="indexation-stat"><span>ИКС</span><strong>${fmt.format(s.sqi||0)}</strong></div><div class="indexation-stat"><span>Проблем</span><strong>${fmt.format((state.seoProblems||[]).filter(x=>String(x.state||'').toUpperCase()!=='ABSENT').length)}</strong></div>`:'<div class="empty-state">После синхронизации здесь появится состояние индексации Яндекса.</div>';
-    const queries=(state.seo||[]).filter(x=>num(x.position)>0),buckets=['ТОП-3','4–10','11–20','21–50','51+'];
+
+    const queries=(state.seo||[]).filter(x=>num(x.position)>0);
+    const buckets=['ТОП-3','4–10','11–20','21–50','51+'];
     const cur=Object.fromEntries(buckets.map(x=>[x,0])),prev=Object.fromEntries(buckets.map(x=>[x,0]));
-    queries.forEach(q=>{cur[seoPositionBucket(q.position)]++;const previous=Math.max(1,num(q.position)+num(q.delta));prev[seoPositionBucket(previous)]++;});
-    chart('seoIndexChart','bar',{labels:buckets,datasets:[{label:'Сейчас',data:buckets.map(x=>cur[x]),backgroundColor:'rgba(91,92,246,.82)',borderRadius:7,borderSkipped:false},{label:'Предыдущий период',data:buckets.map(x=>prev[x]),backgroundColor:'rgba(157,164,177,.34)',borderRadius:7,borderSkipped:false}]},{plugins:{legend:{display:true,position:'bottom'}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}});
-    const growth=queries.filter(q=>num(q.delta)>=2).sort((a,b)=>b.delta-a.delta),decline=queries.filter(q=>num(q.delta)<=-2).sort((a,b)=>a.delta-b.delta),stable=queries.length-growth.length-decline.length;
-    const moves=document.getElementById('seoMovementSummary');if(moves)moves.innerHTML=`<div class="movement-kpis"><div class="movement-kpi good"><strong>${growth.length}</strong><span>запросов выросли</span></div><div class="movement-kpi bad"><strong>${decline.length}</strong><span>запросов просели</span></div><div class="movement-kpi"><strong>${Math.max(0,stable)}</strong><span>без заметного движения</span></div></div><div class="movement-lists"><div><span class="section-kicker">Лучший рост</span>${growth.slice(0,4).map(q=>`<div class="mini-row"><span>${esc(truncate(q.query,52))}</span><strong class="positive">+${num(q.delta).toFixed(1)}</strong></div>`).join('')||'<div class="empty-inline">Нет заметного роста</div>'}</div><div><span class="section-kicker">Главные просадки</span>${decline.slice(0,4).map(q=>`<div class="mini-row"><span>${esc(truncate(q.query,52))}</span><strong class="negative">${num(q.delta).toFixed(1)}</strong></div>`).join('')||'<div class="empty-inline">Нет заметных просадок</div>'}</div></div>`;
+    const seoMeta=state.webmasterSeoMeta||{};
+    const comparable=seoMeta.comparisonAvailable!==false;
+    const daily=(Array.isArray(yt?.daily)?yt.daily:[]).filter(x=>x.date>=selectedRange.from&&x.date<=selectedRange.to).sort((a,b)=>a.date.localeCompare(b.date));
+    const chartTitle=document.getElementById('seoPositionChartTitle'),chartSubtitle=document.getElementById('seoPositionChartSubtitle');
+    if(queries.length){
+      queries.forEach(q=>{
+        cur[seoPositionBucket(q.position)]++;
+        if(comparable&&Number.isFinite(q.delta))prev[seoPositionBucket(Math.max(1,num(q.position)+q.delta))]++;
+      });
+      if(chartTitle)chartTitle.textContent='Распределение запросов по позициям';
+      if(chartSubtitle)chartSubtitle.textContent=comparable?'Текущий и предыдущий сопоставимые периоды.':'Доступная выборка мониторинга. Предыдущий период недоступен.';
+      const datasets=[{label:'Сейчас',data:buckets.map(x=>cur[x]),backgroundColor:'rgba(91,92,246,.82)',borderRadius:7,borderSkipped:false}];
+      if(comparable)datasets.push({label:'Предыдущий период',data:buckets.map(x=>prev[x]),backgroundColor:'rgba(157,164,177,.34)',borderRadius:7,borderSkipped:false});
+      chart('seoIndexChart','bar',{labels:buckets,datasets},{plugins:{legend:{display:true,position:'bottom'}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}});
+    }else if(daily.length){
+      if(chartTitle)chartTitle.textContent='Динамика показов и кликов Яндекса';
+      if(chartSubtitle)chartSubtitle.textContent='Все поисковые запросы сайта · по дням выбранного периода. Детализация ключевых фраз пока недоступна.';
+      chart('seoIndexChart','line',{labels:daily.map(x=>dateRu(x.date)),datasets:[
+        {label:'Показы',data:daily.map(x=>num(x.shows)),borderColor:'#6657f6',fill:false,tension:.2,yAxisID:'y'},
+        {label:'Клики',data:daily.map(x=>num(x.clicks)),borderColor:'#16a085',fill:false,tension:.2,yAxisID:'y1'}
+      ]},{plugins:{legend:{display:true,position:'bottom'}},scales:{x:{grid:{display:false}},y:{type:'linear',position:'left',beginAtZero:true,title:{display:true,text:'Показы'}},y1:{type:'linear',position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Клики'}}}});
+    }else{
+      if(chartTitle)chartTitle.textContent='Динамика поисковой видимости Яндекса';
+      if(chartSubtitle)chartSubtitle.textContent='Дневная статистика и детализация запросов за выбранный период отсутствуют.';
+      destroyChart('seoIndexChart');
+    }
+    const growth=comparable?queries.filter(q=>Number.isFinite(q.delta)&&q.delta>=2).sort((a,b)=>b.delta-a.delta):[];
+    const decline=comparable?queries.filter(q=>Number.isFinite(q.delta)&&q.delta<=-2).sort((a,b)=>a.delta-b.delta):[];
+    const stable=comparable?queries.filter(q=>Number.isFinite(q.delta)&&Math.abs(q.delta)<2).length:0;
+    const moves=document.getElementById('seoMovementSummary');
+    if(moves){
+      if(!queries.length&&daily.length>=2){
+        const halfway=Math.floor(daily.length/2);
+        const first=daily.slice(0,halfway),second=daily.slice(halfway);
+        const sumKey=(arr,key)=>arr.reduce((acc,row)=>acc+num(row[key]),0);
+        const trend=key=>{
+          const a=sumKey(first,key)/first.length,b=sumKey(second,key)/second.length;
+          return a>0?((b/a-1)*100):null;
+        };
+        const fmtTrend=n=>n===null?'—':(n>0?'+':'')+n.toFixed(1)+'%';
+        const avgPos=rows=>{
+          let weighted=0,count=0;
+          for(const row of rows){if(Number.isFinite(row.position)&&row.position>0&&row.shows>0){weighted+=row.position*row.shows;count+=row.shows;}}
+          return count?weighted/count:null;
+        };
+        const p1=avgPos(first),p2=avgPos(second),delta=p1!==null&&p2!==null?p2-p1:null;
+        moves.innerHTML='<div class="movement-kpis"><div class="movement-kpi"><strong>'+fmtTrend(trend('shows'))+'</strong><span>показы в день</span></div><div class="movement-kpi"><strong>'+fmtTrend(trend('clicks'))+'</strong><span>клики в день</span></div><div class="movement-kpi"><strong>'+(delta===null?'—':(delta>0?'+':'')+delta.toFixed(1))+'</strong><span>изменение средней позиции</span></div></div><p class="muted">Сравнение первой части периода ('+esc(first[0].date)+' — '+esc(first.at(-1).date)+', '+first.length+' дн.) и второй ('+esc(second[0].date)+' — '+esc(second.at(-1).date)+', '+second.length+' дн.). Сравниваются показатели в среднем за день. Для позиции снижение — улучшение. Движение конкретных запросов недоступно.</p>';
+      }else if(!comparable&&queries.length){
+        moves.innerHTML='<div class="empty-state">Получены '+fmt.format(queries.length)+' поисковых запросов за '+esc(seoMeta.from||'короткое окно')+' — '+esc(seoMeta.to||'последние дни')+'. Сопоставимого предыдущего периода нет, поэтому рост и просадки запросов не рассчитываются.</div>';
+      }else if(!queries.length){
+        moves.innerHTML='<div class="empty-state">Недостаточно данных для расчёта динамики и сравнения периодов.</div>';
+      }else{
+        moves.innerHTML='<div class="movement-kpis"><div class="movement-kpi good"><strong>'+growth.length+'</strong><span>запросов выросли</span></div><div class="movement-kpi bad"><strong>'+decline.length+'</strong><span>запросов просели</span></div><div class="movement-kpi"><strong>'+stable+'</strong><span>без заметного движения</span></div></div><div class="movement-lists"><div><span class="section-kicker">Лучший рост</span>'+growth.slice(0,4).map(q=>'<div class="mini-row"><span>'+esc(truncate(q.query,52))+'</span><strong class="positive">+'+num(q.delta).toFixed(1)+'</strong></div>').join('')+'</div><div><span class="section-kicker">Главные просадки</span>'+decline.slice(0,4).map(q=>'<div class="mini-row"><span>'+esc(truncate(q.query,52))+'</span><strong class="negative">'+num(q.delta).toFixed(1)+'</strong></div>').join('')+'</div></div>';
+      }
+    }
     const activeProblems=(state.seoProblems||[]).filter(x=>String(x.state||'').toUpperCase()!=='ABSENT');
     document.getElementById('seoProblems').innerHTML=activeProblems.length?activeProblems.slice(0,12).map(x=>{const [title,action]=seoDiagnosticMeta(x);return issueHtml({level:x.severity==='FATAL'||x.severity==='CRITICAL'?'high':x.severity==='POSSIBLE_PROBLEM'?'medium':'low',title,text:`Вебмастер: ${String(x.state||'').toUpperCase()==='PRESENT'?'проблема обнаружена':'требуется проверка'}.`,action});}).join(''):'<div class="empty-state success-empty"><strong>Критических технических проблем не обнаружено</strong><span>Проверки со статусом ABSENT не считаются ошибками и больше не выводятся как задачи.</span></div>';
     document.getElementById('seoPlan').innerHTML=seoRecommendations().map((x,i)=>`<div class="plan-card"><span class="plan-index">${i+1}</span><div><strong>${esc(x.title)}</strong><p>${esc(x.text)}</p><span>${esc(x.action)}</span></div></div>`).join('');
@@ -522,7 +576,7 @@
     const compact=!search&&!seoTableExpanded&&allRows.length>SEO_TABLE_COMPACT_LIMIT;
     const rows=compact?allRows.slice(0,SEO_TABLE_COMPACT_LIMIT):allRows;
     const table=document.getElementById('seoTable');
-    if(table)table.innerHTML=rows.map(x=>{const [l,c]=seoSignal(x);return `<tr><td>${esc(x.query)}</td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${num(x.position).toFixed(1)}</td><td>${x.clickPosition?num(x.clickPosition).toFixed(1):'—'}</td><td class="${x.delta>0?'positive':x.delta<0?'negative':''}">${x.delta>0?'+':''}${num(x.delta).toFixed(1)}</td><td>${pill(l,c)}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty-cell">Нет запросов.</td></tr>';
+    if(table)table.innerHTML=rows.map(x=>{const [l,c]=seoSignal(x);return `<tr><td>${esc(x.query)}</td><td>${fmt.format(x.shows)}</td><td>${fmt.format(x.clicks)}</td><td>${pct(x.ctr)}</td><td>${num(x.position).toFixed(1)}</td><td>${x.clickPosition?num(x.clickPosition).toFixed(1):'—'}</td><td class="${x.delta>0?'positive':x.delta<0?'negative':''}">${x.delta>0?'+':''}${num(x.delta).toFixed(1)}</td><td>${pill(l,c)}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty-cell">Яндекс не вернул детализацию ключевых фраз за выбранный период. Общие показатели доступны выше.</td></tr>';
     const toggle=document.getElementById('seoTableToggle');
     if(toggle){
       const canToggle=!search&&allRows.length>SEO_TABLE_COMPACT_LIMIT;
@@ -532,7 +586,7 @@
     }
     const summary=document.getElementById('seoTableSummary');
     if(summary){
-      if(!allRows.length)summary.textContent='';
+      if(!allRows.length)summary.textContent='Детализация отдельных запросов недоступна. Общие показатели и дневные тренды рассчитываются отдельно.';
       else if(search)summary.textContent=`Найдено запросов: ${fmt.format(allRows.length)}`;
       else if(compact)summary.textContent=`Показано ${SEO_TABLE_COMPACT_LIMIT} из ${fmt.format(allRows.length)} запросов`;
       else summary.textContent=`Показано запросов: ${fmt.format(allRows.length)}`;
