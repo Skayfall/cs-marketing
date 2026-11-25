@@ -496,13 +496,28 @@ async function webmasterRangeData(env, from, to) {
   const prevTo=new Date(a); prevTo.setUTCDate(prevTo.getUTCDate()-1);
   const prevFrom=new Date(prevTo); prevFrom.setUTCDate(prevFrom.getUTCDate()-(days-1));
   const params={order_by:'TOTAL_SHOWS',query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'],date_from:from,date_to:to,limit:'500'};
-  const [cur, prev] = await Promise.all([
+  const [cur, prev, allHistory] = await Promise.all([
     apiGet(withParams(`${root}/search-queries/popular`,params),headers),
-    apiGet(withParams(`${root}/search-queries/popular`,{...params,date_from:dateOnly(prevFrom),date_to:dateOnly(prevTo)}),headers).catch(()=>({queries:[]}))
+    apiGet(withParams(`${root}/search-queries/popular`,{...params,date_from:dateOnly(prevFrom),date_to:dateOnly(prevTo)}),headers).catch(()=>({queries:[]})),
+    // Official aggregate history is independent of the popular-query sample.
+    apiGet(withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS'],date_from:from,date_to:to}),headers).catch(()=>null)
   ]);
   const prevMap=new Map((prev.queries||[]).map(q=>[q.query_text,q]));
   const seo=(cur.queries||[]).map(q=>{const ind=q.indicators||{},shows=num(ind.TOTAL_SHOWS),clicks=num(ind.TOTAL_CLICKS),position=num(ind.AVG_SHOW_POSITION),clickPosition=num(ind.AVG_CLICK_POSITION),prevPos=num(prevMap.get(q.query_text)?.indicators?.AVG_SHOW_POSITION);return {query:q.query_text,shows,clicks,ctr:shows?clicks/shows*100:0,position,clickPosition,delta:prevPos&&position?prevPos-position:0};});
-  return { hostId, seo };
+  const searchIndicators=allHistory?.indicators||{};
+  const seriesFor=key=>(Array.isArray(searchIndicators[key])?searchIndicators[key]:[])
+    .filter(row=>typeof row?.date==='string'&&row.date.slice(0,10)>=from&&row.date.slice(0,10)<=to)
+    .map(row=>({date:row.date.slice(0,10),value:num(row.value)}));
+  const showsSeries=seriesFor('TOTAL_SHOWS'),clicksSeries=seriesFor('TOTAL_CLICKS');
+  const totals={
+    available:showsSeries.length>0||clicksSeries.length>0,
+    shows:showsSeries.reduce((sum,row)=>sum+row.value,0),
+    clicks:clicksSeries.reduce((sum,row)=>sum+row.value,0),
+    from,to,showDays:showsSeries.length,clickDays:clicksSeries.length,
+    lastDay:showsSeries.at(-1)?.date||clicksSeries.at(-1)?.date||null,
+    source:'search-queries/all/history'
+  };
+  return { hostId, seo, popularCount:Number.isFinite(Number(cur.count))?Number(cur.count):seo.length, totals };
 }
 
 
