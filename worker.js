@@ -1,5 +1,5 @@
-// CS Marketing by skayfall v2.9.0 — reliable refresh and retail Excel analytics
-const APP_VERSION = "2.9.0";
+// CS Marketing by skayfall v2.10.0 — period report analytics and Metrika counter diagnostics
+const APP_VERSION = "2.10.0";
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -18,7 +18,7 @@ export default {
       if (url.pathname.startsWith('/api/')) return await handleApi(request, env, ctx, url);
       const asset = await env.ASSETS.fetch(request);
       // Application shell and scripts must not stick in the browser cache after a deploy.
-      if (['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest'].includes(url.pathname)) {
+      if (['/', '/index.html', '/app.js', '/retail.js', '/styles.css', '/manifest.webmanifest'].includes(url.pathname)) {
         const headers = new Headers(asset.headers);
         headers.set('cache-control', 'no-store, max-age=0, must-revalidate');
         return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
@@ -45,6 +45,12 @@ async function handleApi(request, env, ctx, url) {
   await ensureExtendedSchema(env);
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
+  if (request.method === 'GET' && url.pathname === '/api/metrika/counters') return listMetrikaCounters(env);
+  if (request.method === 'GET' && url.pathname === '/api/retail/reports') return retailPeriodAnalytics(url, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/reports/import/start') return retailPeriodStart(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/reports/import/chunk') return retailPeriodChunk(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/reports/import/finish') return retailPeriodFinish(request, env);
+  if (request.method === 'DELETE' && /^\/api\/retail\/reports\/import\/[0-9a-f-]{36}$/.test(url.pathname)) return retailPeriodDelete(url, env);
   if (request.method === 'GET' && url.pathname === '/api/retail') return retailAnalytics(url, env);
   if (request.method === 'POST' && url.pathname === '/api/retail/import/start') return retailImportStart(request, env);
   if (request.method === 'POST' && url.pathname === '/api/retail/import/chunk') return retailImportChunk(request, env);
@@ -209,7 +215,11 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS retail_imports (id TEXT PRIMARY KEY, file_hash TEXT NOT NULL UNIQUE, filename TEXT NOT NULL, sheet TEXT, declared_rows INTEGER NOT NULL, row_count INTEGER DEFAULT 0, date_from TEXT, date_to TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS retail_sales (import_id TEXT NOT NULL, row_index INTEGER NOT NULL, sale_date TEXT NOT NULL, sku TEXT, product_name TEXT NOT NULL, order_id TEXT, quantity REAL DEFAULT 0, revenue REAL DEFAULT 0, commission REAL DEFAULT 0, logistics REAL DEFAULT 0, cost REAL DEFAULT 0, operation TEXT, PRIMARY KEY(import_id,row_index), FOREIGN KEY(import_id) REFERENCES retail_imports(id))`,
       `CREATE INDEX IF NOT EXISTS idx_retail_sales_date ON retail_sales(sale_date)`,
-      `CREATE INDEX IF NOT EXISTS idx_retail_sales_sku ON retail_sales(sku)`
+      `CREATE INDEX IF NOT EXISTS idx_retail_sales_sku ON retail_sales(sku)`,
+      `CREATE TABLE IF NOT EXISTS retail_period_imports (id TEXT PRIMARY KEY, file_hash TEXT NOT NULL UNIQUE, filename TEXT NOT NULL, sheet TEXT, period_from TEXT NOT NULL, period_to TEXT NOT NULL, report_date TEXT, declared_rows INTEGER NOT NULL, row_count INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS idx_retail_period_dates ON retail_period_imports(period_from,period_to,status)`,
+      `CREATE TABLE IF NOT EXISTS retail_period_items (import_id TEXT NOT NULL, row_index INTEGER NOT NULL, brand TEXT, sku TEXT, product_name TEXT NOT NULL, revenue REAL NOT NULL DEFAULT 0, quantity REAL NOT NULL DEFAULT 0, margin_pct REAL, PRIMARY KEY(import_id,row_index), FOREIGN KEY(import_id) REFERENCES retail_period_imports(id))`,
+      `CREATE INDEX IF NOT EXISTS idx_retail_period_items_sku ON retail_period_items(sku)`
     ];
     for (const sql of creates) await env.DB.prepare(sql).run();
     const alters = [
@@ -326,6 +336,7 @@ async function status(env) {
     MAX_BOT_TOKEN: Boolean(env.MAX_BOT_TOKEN),
     MAX_CHANNEL_ID: Boolean(env.MAX_CHANNEL_ID),
     METRIKA_COUNTER_ID: Boolean(env.METRIKA_COUNTER_ID),
+    METRIKA_RETAIL_COUNTER_IDS: Boolean(env.METRIKA_RETAIL_COUNTER_IDS),
     WEBMASTER_HOST_ID: Boolean(env.WEBMASTER_HOST_ID),
     MAX_CHANNEL_URL: Boolean(env.MAX_CHANNEL_URL),
     DZEN_CHANNEL_URL: Boolean(env.DZEN_CHANNEL_URL)
@@ -337,6 +348,7 @@ async function status(env) {
     runtime,
     siteUrl: env.SITE_URL || null,
     metrikaCounterId: env.METRIKA_COUNTER_ID || resolved.metrika?.external_id || null,
+    metrikaRetailCounterIds: String(env.METRIKA_RETAIL_COUNTER_IDS || '').split(',').map(s=>s.trim()).filter(Boolean),
     webmasterHostId: env.WEBMASTER_HOST_ID || resolved.webmaster?.external_id || null,
     vkGroupId: env.VK_GROUP_ID || resolved.vksocial?.external_id || null
   });
@@ -2180,6 +2192,140 @@ async function retailAnalytics(url, env) {
       FROM retail_sales s INNER JOIN retail_imports i ON i.id=s.import_id WHERE i.status='complete' AND s.sale_date BETWEEN ? AND ?`,from,to)
   ]);
   return json({ from,to,imports,daily,products,orders:orders[0]||{},coverage:breakdown[0]||{} });
+}
+
+/* -------------------- RETAIL: AGGREGATE SKU REPORTS -------------------- */
+
+async function listMetrikaCounters(env) {
+  if (!env.YANDEX_TOKEN) return json({ error: 'В Cloudflare отсутствует YANDEX_TOKEN.' }, 400);
+  try {
+    const result = await apiGet('https://api-metrika.yandex.net/management/v1/counters?per_page=1000',
+      { Authorization: `OAuth ${env.YANDEX_TOKEN}` });
+    const counters = (result.counters || []).map(c => ({
+      id: String(c.id), name: String(c.name || ''), site: String(c.site || ''),
+      permission: String(c.permission || '')
+    }));
+    return json({ counters, primaryId: String(env.METRIKA_COUNTER_ID || ''),
+      retailIds: String(env.METRIKA_RETAIL_COUNTER_IDS || '').split(',').map(s => s.trim()).filter(Boolean) });
+  } catch(e) { return json({ error: 'Проверка доступа Метрики: ' + String(e?.message||e).slice(0,500) }, 502); }
+}
+function retailPeriodBounds(from,to) {
+  const start=retailIsoDate(from),end=retailIsoDate(to);
+  if (start>end) throw new Error('Начало периода позже конца');
+  const days=(Date.parse(end+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000;
+  if(days>370) throw new Error('Отчёт должен охватывать не более 370 дней');
+  return [start,end];
+}
+async function retailPeriodStart(request,env) {
+  const b=await request.json().catch(()=>({}));
+  let from,to;
+  try{[from,to]=retailPeriodBounds(b.periodFrom,b.periodTo);}catch(e){return json({error:e.message},400);}
+  const hash=String(b.hash||'').toLowerCase(),filename=String(b.filename||'').trim().slice(0,240);
+  const sheet=String(b.sheet||'').slice(0,120),rows=Number(b.rows||0);
+  if(!/^[0-9a-f]{64}$/.test(hash)||!filename||!Number.isInteger(rows)||rows<1||rows>40000)
+    return json({error:'Неверные параметры отчёта. Допустимо 1–40000 строк.'},400);
+  const old=await env.DB.prepare('SELECT filename,status FROM retail_period_imports WHERE file_hash=?').bind(hash).first();
+  if(old)return json({error:`Файл уже загружен: ${old.filename} (${old.status}). При необходимости сначала удалите его.`},409);
+  const conflict=await env.DB.prepare("SELECT filename FROM retail_period_imports WHERE status='complete' AND NOT(period_to < ? OR period_from > ?) LIMIT 1").bind(from,to).first();
+  if(conflict)return json({error:`Периоды пересекаются с «${conflict.filename}». Удалите или замените предыдущий отчёт: суммировать пересекающиеся сводные файлы нельзя.`},409);
+  const reportDate=b.reportDate?retailIsoDate(b.reportDate):null;
+  const id=crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO retail_period_imports(id,file_hash,filename,sheet,period_from,period_to,report_date,declared_rows) VALUES(?,?,?,?,?,?,?,?)')
+    .bind(id,hash,filename,sheet,from,to,reportDate,rows).run();
+  return json({ok:true,importId:id});
+}
+async function retailPeriodChunk(request,env) {
+  const b=await request.json().catch(()=>({})),id=String(b.importId||'');
+  const imp=await env.DB.prepare('SELECT id,status,declared_rows FROM retail_period_imports WHERE id=?').bind(id).first();
+  if(!imp||imp.status!=='pending')return json({error:'Импорт отсутствует или уже завершён.'},404);
+  if(!Array.isArray(b.rows)||b.rows.length<1||b.rows.length>100)return json({error:'В одном блоке должно быть от 1 до 100 строк.'},400);
+  let queries;
+  try{
+    queries=b.rows.map(x=>{
+      const i=Number(x.index);if(!Number.isInteger(i)||i<0||i>=imp.declared_rows)throw Error('Некорректный номер строки');
+      const margin=(x.marginPct===''||x.marginPct===null||x.marginPct===undefined)?null:retailMetric(x.marginPct,'Маржинальность');
+      if(margin!==null&&(margin< -1000000||margin>1000000))throw Error('Процент маржинальности выходит за допустимый диапазон импорта');
+      const sku=String(x.sku||'').trim().slice(0,100),name=String(x.product||'').trim().slice(0,350);
+      if(!sku&&!name)throw Error('У строки нет наименования или артикула');
+      return env.DB.prepare(`INSERT INTO retail_period_items(import_id,row_index,brand,sku,product_name,revenue,quantity,margin_pct)
+        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(import_id,row_index) DO UPDATE SET brand=excluded.brand,sku=excluded.sku,product_name=excluded.product_name,revenue=excluded.revenue,quantity=excluded.quantity,margin_pct=excluded.margin_pct`)
+        .bind(id,i,String(x.brand||'').slice(0,100),sku,name||sku,retailMetric(x.revenue,'Выручка'),retailMetric(x.quantity,'Количество'),margin);
+    });
+  }catch(e){return json({error:e.message},400);}
+  await env.DB.batch(queries);
+  return json({ok:true,processed:queries.length});
+}
+async function retailPeriodFinish(request,env) {
+  const b=await request.json().catch(()=>({})),id=String(b.importId||'');
+  const imp=await env.DB.prepare('SELECT * FROM retail_period_imports WHERE id=?').bind(id).first();
+  if(!imp||imp.status!=='pending')return json({error:'Незавершённый импорт не найден.'},404);
+  const actual=await env.DB.prepare('SELECT COUNT(*) AS n FROM retail_period_items WHERE import_id=?').bind(id).first();
+  if(Number(actual.n)!==Number(imp.declared_rows))return json({error:`Получено ${actual.n} из ${imp.declared_rows} строк. Импорт не завершён.`},409);
+  const conflict=await env.DB.prepare("SELECT filename FROM retail_period_imports WHERE id<>? AND status='complete' AND NOT(period_to < ? OR period_from > ?) LIMIT 1")
+    .bind(id,imp.period_from,imp.period_to).first();
+  if(conflict)return json({error:`Обнаружено пересечение с «${conflict.filename}». Удалите один из файлов.`,conflict:true},409);
+  await env.DB.prepare("UPDATE retail_period_imports SET row_count=?,status='complete',completed_at=CURRENT_TIMESTAMP WHERE id=?")
+    .bind(actual.n,id).run();
+  return json({ok:true,imported:Number(actual.n),from:imp.period_from,to:imp.period_to});
+}
+async function retailPeriodDelete(url,env) {
+  const id=url.pathname.split('/').pop();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM retail_period_items WHERE import_id=?').bind(id),
+    env.DB.prepare('DELETE FROM retail_period_imports WHERE id=?').bind(id)
+  ]);
+  return json({ok:true});
+}
+function retailPriorPeriod(from,to) {
+  const a=new Date(from+'T00:00:00Z'),b=new Date(to+'T00:00:00Z');
+  if(a.getUTCFullYear()!==b.getUTCFullYear()||a.getUTCMonth()!==b.getUTCMonth())return null;
+  const year=a.getUTCFullYear(),month=a.getUTCMonth();
+  const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
+  const prevLast=new Date(Date.UTC(year,month,0)).getUTCDate();
+  const pad=x=>String(x).padStart(2,'0');
+  if(a.getUTCDate()>prevLast)return null;
+  const prevYear=month===0?year-1:year,prevMonth=month===0?12:month;
+  const make=d=>`${prevYear}-${pad(prevMonth)}-${pad(d)}`;
+  return {from:make(a.getUTCDate()),to:make(b.getUTCDate()===lastDay?prevLast:Math.min(b.getUTCDate(),prevLast))};
+}
+async function retailPeriodAnalytics(url,env) {
+  let from,to;
+  try{[from,to]=retailPeriodBounds(url.searchParams.get('from'),url.searchParams.get('to'));}
+  catch(e){return json({error:e.message},400);}
+  const q=(sql,...args)=>env.DB.prepare(sql).bind(...args).all().then(r=>r.results||[]);
+  const imports=await q(`SELECT i.id,i.filename,i.sheet,i.period_from AS periodFrom,i.period_to AS periodTo,i.report_date AS reportDate,
+    i.row_count AS rowCount,i.status,i.created_at AS createdAt,
+    COALESCE(SUM(s.revenue),0) AS revenue,COALESCE(SUM(s.quantity),0) AS quantity,
+    COALESCE(SUM(CASE WHEN s.revenue>0 THEN s.revenue ELSE 0 END),0) AS gross,
+    COALESCE(SUM(CASE WHEN s.revenue<0 THEN -s.revenue ELSE 0 END),0) AS negative,
+    COALESCE(SUM(CASE WHEN s.revenue>0 AND s.margin_pct BETWEEN -200 AND 100 THEN s.revenue*s.margin_pct ELSE 0 END),0) AS marginNumerator,
+    COALESCE(SUM(CASE WHEN s.revenue>0 AND s.margin_pct BETWEEN -200 AND 100 THEN s.revenue ELSE 0 END),0) AS marginDenominator,
+    SUM(CASE WHEN s.margin_pct IS NOT NULL AND (s.margin_pct < -200 OR s.margin_pct > 100) THEN 1 ELSE 0 END) AS marginOutliers
+    FROM retail_period_imports i LEFT JOIN retail_period_items s ON i.id=s.import_id
+    GROUP BY i.id ORDER BY i.period_from DESC,i.created_at DESC LIMIT 100`);
+  const complete=imports.filter(x=>x.status==='complete');
+  const selected=complete.filter(x=>x.periodFrom>=from&&x.periodTo<=to);
+  const partial=complete.filter(x=>x.periodFrom<=to&&x.periodTo>=from&&!(x.periodFrom>=from&&x.periodTo<=to));
+  const sum=key=>selected.reduce((acc,x)=>acc+Number(x[key]||0),0);
+  const summary={revenue:sum('revenue'),gross:sum('gross'),negative:sum('negative'),quantity:sum('quantity'),
+    positions:sum('rowCount'),marginPct:sum('marginDenominator')?sum('marginNumerator')/sum('marginDenominator'):null,
+    marginOutliers:sum('marginOutliers'),
+    marginCoverage:sum('marginDenominator'),fileCount:selected.length};
+  const ids=selected.map(x=>x.id);
+  const products=ids.length?await q(`SELECT COALESCE(NULLIF(s.sku,''),s.product_name) AS productKey,
+    MAX(s.product_name) AS product,MAX(s.sku) AS sku,MAX(s.brand) AS brand,
+    SUM(s.revenue) AS revenue,SUM(s.quantity) AS quantity,
+    SUM(CASE WHEN s.revenue>0 AND s.margin_pct BETWEEN -200 AND 100 THEN s.revenue*s.margin_pct ELSE 0 END) AS marginNumerator,
+    SUM(CASE WHEN s.revenue>0 AND s.margin_pct BETWEEN -200 AND 100 THEN s.revenue ELSE 0 END) AS marginDenominator
+    FROM retail_period_items s WHERE s.import_id IN (${ids.map(()=>'?').join(',')})
+    GROUP BY COALESCE(NULLIF(s.sku,''),s.product_name) ORDER BY revenue DESC LIMIT 60`,...ids):[];
+  const mostRecent=selected.slice().sort((a,b)=>b.periodTo.localeCompare(a.periodTo))[0];
+  const expected=mostRecent?retailPriorPeriod(mostRecent.periodFrom,mostRecent.periodTo):null;
+  const previous=expected?complete.find(x=>x.periodFrom===expected.from&&x.periodTo===expected.to):null;
+  const comparison={current:mostRecent||null,previous:previous||null,expected:expected||null,
+    changePct:previous&&Number(previous.revenue)!==0?(Number(mostRecent.revenue)/Number(previous.revenue)-1)*100:null};
+  return json({from,to,imports,selectedIds:ids,partial,summary,products,comparison,
+    history:complete.slice().sort((a,b)=>a.periodFrom.localeCompare(b.periodFrom)).slice(-16)});
 }
 
 /* -------------------- INTEGRATION RESOLUTION -------------------- */

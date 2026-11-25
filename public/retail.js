@@ -1,266 +1,273 @@
-// CS Marketing v2.9: retail Excel import + reporting. Client file parsing; D1 stores normalized rows.
+// CS Marketing v2.10: factual period reports from ВсеИнструменты (.xlsx); D1-backed analytics.
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const n = v => Number(v) || 0;
-  const price = v => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0}).format(n(v));
-  const count = v => new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(n(v));
-  const LABELS = {
-    date:'Дата продажи *', product:'Название товара', sku:'Артикул / SKU', orderId:'Номер заказа',
-    quantity:'Количество', revenue:'Сумма продажи *', unitPrice:'Цена за единицу (вместо суммы)',
-    operation:'Операция / статус (для возвратов)', commission:'Комиссия, ₽', logistics:'Логистика, ₽', cost:'Себестоимость строки, ₽'
+  const num = v => Number(v) || 0;
+  const money = v => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:2}).format(num(v));
+  const integer = v => new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(num(v));
+  const norm = s => String(s ?? '').toLowerCase().replace(/[\s\u00a0_–—-]+/g,' ').replace(/[:.,()]+/g,'').trim();
+  const fields = {
+    brand:'Бренд', product:'Наименование товара', sku:'Артикул / SKU',
+    revenue:'Выручка без НДС, ₽ *', quantity:'Количество, шт. *', marginPct:'Маржинальность, % (если есть)'
   };
-  const MATCHERS = {
-    date:[/дата.*(прода|заказ|реализ|отгруз|операц)/i,/^(дата|date|sales date)$/i],
-    product:[/^(наименование товара|название товара|товар|номенклатура|product|name)$/i,/наименование.*товар/i],
-    sku:[/артикул.*(поставщика|товара)?/i,/^(sku|код товара|код номенклатуры)$/i],
-    orderId:[/номер.*заказ/i,/^(заказ|order id|id заказа)$/i],
-    quantity:[/^(количество|кол-во|количество проданных|quantity|qty|шт\.?)$/i,/количество.*(шт|прод|товар)/i],
-    revenue:[/^(выручка|сумма продаж|сумма продажи|сумма реализации|сумма заказа|итого продаж|revenue|sales amount)$/i,/сумма.*(прода|реализ)/i,/стоимость.*(прода|реализ)/i],
-    unitPrice:[/^(цена продажи|цена за единицу|цена за шт|unit price|цена товара)$/i],
-    operation:[/^(операция|тип операции|статус|вид операции|operation)$/i],
-    commission:[/^(комиссия|комиссия маркетплейса|вознаграждение площадки)$/i,/комиссия.*(площад|маркетплейс)/i],
-    logistics:[/^(логистика|доставка|стоимость доставки|транспортные расходы)$/i,/логистическ.*расход/i],
-    cost:[/^(себестоимость|себестоимость строки|закупочная стоимость)$/i]
+  const match = {
+    brand:[/^бренд$/i,/^brand$/i],
+    product:[/^наименование товар/i,/^название товара$/i,/^товар$/i,/^product$/i],
+    sku:[/^артикул/i,/^sku$/i,/^код товара/i],
+    revenue:[/выручка/i,/сумма продаж/i,/сумма реализации/i,/revenue/i],
+    quantity:[/^кол во/i,/^количество/i,/^шт$/i,/^quantity$/i],
+    marginPct:[/маржинальност/i,/^маржа %$/i,/^margin/i]
   };
-  let data={imports:[],daily:[],products:[],orders:{},coverage:{}};
-  let book=null, sheet=null, selectedFile=null, sha=null, rows=[], headers=[], headerIndex=0, mapping={};
-  let importing=false, initDone=false, chart=null, siteSources=[], siteUtm=[];
-  let fromDate='',toDate='';
-  const norm=s=>String(s||'').toLowerCase().replace(/[\s\u00a0_–—-]+/g,' ').replace(/[:.,()]+/g,'').trim();
+  let book=null,sheet=null,selectedFile=null,sha=null,rows=[],headers=[],headerIndex=0,mapping={},suggestedPeriod=null;
+  let dashboard={imports:[],products:[],history:[],summary:{},partial:[]},fromDate='',toDate='',chart=null,importing=false,initDone=false;
+  function setUpload(message,style=''){const node=$('retailUploadState');node.textContent=message;node.className='retail-upload-state '+style;}
+  async function req(url,method='GET',body){
+    const response=await fetch(url,{method,credentials:'include',cache:'no-store',headers:body?{'Content-Type':'application/json'}:{},
+      body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(method==='GET'?25000:45000)});
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(payload.error||`HTTP ${response.status}`);
+    return payload;
+  }
   function asCell(value){
     if(value==null)return '';
     if(value instanceof Date)return value;
     if(typeof value==='object'){
       if(Object.hasOwn(value,'result'))return asCell(value.result);
-      if(Array.isArray(value.richText))return value.richText.map(t=>t.text||'').join('');
+      if(Array.isArray(value.richText))return value.richText.map(x=>x.text||'').join('');
       if(Object.hasOwn(value,'text'))return String(value.text||'');
-      if(Object.hasOwn(value,'hyperlink'))return String(value.text||'');
       return '';
     }
     return value;
   }
-  function setUpload(text,style=''){
-    const x=$('retailUploadState');if(!x)return;
-    x.textContent=text;x.className='retail-upload-state '+style;
+  function toNumber(value){
+    if(typeof value==='number')return Number.isFinite(value)?value:NaN;
+    if(value==null||String(value).trim()==='')return NaN;
+    let s=String(value).trim().replace(/[\s\u00a0₽]/g,'').replace(/руб(лей|\.)?/gi,'');
+    const negative=/^\(.*\)$/.test(s);
+    s=s.replace(/[()]/g,'').replace(/[^\d,.+\-]/g,'');
+    if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
+    else if(s.includes(','))s=s.replace(',','.');
+    const x=Number(s);return Number.isFinite(x)?(negative?-Math.abs(x):x):NaN;
   }
-  async function req(path,method='GET',body){
-    const r=await fetch(path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,
-      credentials:'include',cache:'no-store',signal:AbortSignal.timeout(method==='GET'?25000:45000)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||'HTTP '+r.status);
-    return d;
+  function isoDate(value){
+    const input=String(value||'').trim();
+    const m=input.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/);
+    if(!m)return /^\d{4}-\d{2}-\d{2}$/.test(input)&&!isNaN(Date.parse(input+'T12:00:00Z'))?input:'';
+    const d=new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));
+    return d.getUTCFullYear()===+m[3]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[1]?d.toISOString().slice(0,10):'';
   }
-  function numeric(value){
-    if(typeof value==='number')return Number.isFinite(value)?value:0;
-    if(value instanceof Date)return 0;
-    let s=String(value??'').trim().replace(/[\s\u00a0₽р]/g,'').replace(/руб(\.|лей)?/gi,'');
-    if(!s)return 0;
-    const negative=/^\(.*\)$/.test(s);s=s.replace(/[()]/g,'').replace(/[^\d.,+\-]/g,'');
-    if(s.includes(',')&&s.includes('.')){
-      if(s.lastIndexOf(',')>s.lastIndexOf('.'))s=s.replace(/\./g,'').replace(',','.');
-      else s=s.replace(/,/g,'');
-    }else if(s.includes(','))s=s.replace(',','.');
-    const x=Number(s);return Number.isFinite(x)?(negative?-Math.abs(x):x):0;
-  }
-  function xlsxDate(v){
-    if(v instanceof Date&&!Number.isNaN(v.getTime()))return v.toISOString().slice(0,10);
-    if(typeof v==='number'&&v>20000&&v<90000){const d=new Date(Date.UTC(1899,11,30)+Math.floor(v)*86400000);return d.toISOString().slice(0,10);}
-    const s=String(v??'').trim();
-    if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);
-    const m=s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})/);
-    if(m){const d=new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));return d.getUTCFullYear()===+m[3]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[1]?d.toISOString().slice(0,10):'';}
-    return '';
+  function readable(date){const m=String(date||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}.${m[2]}.${m[1]}`:String(date||'');}
+  function detectPeriod(sheetRows){
+    const intro=sheetRows.slice(0,40).flatMap(r=>Array.isArray(r)?r:[]).map(v=>String(v||'')).join(' ');
+    const match=intro.match(/период\s+с\s+(\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4})\s+по\s+(\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4})/i);
+    const reported=intro.match(/отч[её]т\s+по\s+продажам\s+от\s+(\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4})/i);
+    return {from:match?isoDate(match[1]):'',to:match?isoDate(match[2]):'',reportDate:reported?isoDate(reported[1]):''};
   }
   function getSheetRows(ws){
-    const all=[];
+    const output=[];
     ws.eachRow({includeEmpty:false},(row,index)=>{
       if(index>40100)return;
-      const out=[];
-      for(let i=1;i<=Math.min(100,Math.max(row.cellCount,row.actualCellCount));i++)out[i-1]=asCell(row.getCell(i).value);
-      all[index-1]=out;
+      const vals=[];
+      for(let i=1;i<=Math.min(80,Math.max(row.cellCount,row.actualCellCount));i++)vals[i-1]=asCell(row.getCell(i).value);
+      output[index-1]=vals;
     });
-    return all;
+    return output;
   }
-  function scoreHeader(values){
-    const used=new Set();let score=0;
+  function headerScore(values){
+    const matched=new Set();let points=0;
     (values||[]).forEach(v=>{
-      const z=norm(v);
-      if(!z)return;
-      for(const [key,patterns] of Object.entries(MATCHERS)){
-        if(used.has(key))continue;
-        if(patterns.some(p=>p.test(z))){used.add(key);score+=['date','revenue','sku'].includes(key)?3:1;break;}
+      const s=norm(v);
+      for(const [key,patterns] of Object.entries(match)){
+        if(!matched.has(key)&&patterns.some(p=>p.test(s))){matched.add(key);points+=['revenue','sku','quantity'].includes(key)?3:1;break;}
       }
     });
-    return score;
+    return points;
   }
   function setSheet(){
     if(!book)return;
     sheet=book.getWorksheet(Number($('retailSheetSelect').value));
-    rows=getSheetRows(sheet);
-    const options=$('retailHeaderRow');options.textContent='';
-    let best=0,score=-1;
-    for(let i=0;i<Math.min(rows.length,30);i++){
-      const opt=document.createElement('option');opt.value=i;opt.textContent=`Строка ${i+1}: ${rows[i]?.filter(Boolean).slice(0,3).join(' · ').slice(0,85)||'пусто'}`;
-      options.append(opt);
-      if(scoreHeader(rows[i])>score){best=i;score=scoreHeader(rows[i]);}
+    rows=getSheetRows(sheet);suggestedPeriod=detectPeriod(rows);
+    $('retailPeriodFrom').value=suggestedPeriod.from;
+    $('retailPeriodTo').value=suggestedPeriod.to;
+    const select=$('retailHeaderRow');select.textContent='';let best=0,bestScore=-1;
+    for(let i=0;i<Math.min(45,rows.length);i++){
+      const score=headerScore(rows[i]);
+      select.add(new Option(`Строка ${i+1}: ${(rows[i]||[]).filter(v=>v!==''&&v!=null).slice(0,2).join(' · ').slice(0,85)||'пусто'}`,String(i)));
+      if(score>bestScore){bestScore=score;best=i;}
     }
-    options.disabled=false;options.value=String(best);
-    setHeaders();
+    select.disabled=false;select.value=String(best);setHeaders();
   }
   function setHeaders(){
     headerIndex=Number($('retailHeaderRow').value)||0;
-    headers=(rows[headerIndex]||[]).map((v,i)=>String(v||'').trim()||`Колонка ${i+1}`);
+    headers=(rows[headerIndex]||[]).map((v,i)=>String(v||'').trim()||`Столбец ${i+1}`);
     mapping={};const used=new Set();
-    for(const [key,patterns] of Object.entries(MATCHERS)){
-      const idx=headers.findIndex((h,i)=>!used.has(i)&&patterns.some(p=>p.test(norm(h))));
-      if(idx>=0){mapping[key]=idx;used.add(idx);}else mapping[key]=-1;
+    for(const [key,patterns] of Object.entries(match)){
+      const i=headers.findIndex((h,j)=>!used.has(j)&&patterns.some(p=>p.test(norm(h))));
+      mapping[key]=i;if(i>=0)used.add(i);
     }
-    drawMapping();
-  }
-  function drawMapping(){
-    $('retailMappingPanel').hidden=false;
-    const field=$('retailMappingFields');field.textContent='';
-    for(const [key,label] of Object.entries(LABELS)){
-      const wrapper=document.createElement('label');wrapper.textContent=label;
-      const sel=document.createElement('select');sel.className='select';sel.dataset.mapKey=key;
-      const none=new Option('— Нет столбца —','-1');sel.add(none);
-      headers.forEach((v,i)=>sel.add(new Option(`${i+1}. ${v}`,String(i))));
-      sel.value=String(mapping[key]??-1);
-      sel.addEventListener('change',()=>{mapping[key]=Number(sel.value);preview();});
-      wrapper.append(sel);field.append(wrapper);
+    const holder=$('retailMappingFields');holder.textContent='';
+    for(const [key,title] of Object.entries(fields)){
+      const label=document.createElement('label');label.textContent=title;
+      const select=document.createElement('select');select.className='select';
+      select.add(new Option('— Нет столбца —','-1'));
+      headers.forEach((s,i)=>select.add(new Option(`${i+1}. ${s}`,String(i))));
+      select.value=String(mapping[key]??-1);
+      select.addEventListener('change',()=>{mapping[key]=Number(select.value);preview();});
+      label.append(select);holder.append(label);
     }
-    preview();
+    $('retailMappingPanel').hidden=false;preview();
   }
   function extract(){
     const valid=[],bad=[];
-    if(mapping.date<0 || (mapping.revenue<0 && mapping.unitPrice<0))return {valid,bad,problem:'Выберите дату и сумму продажи (либо цену за единицу).'};
+    const start=$('retailPeriodFrom').value,end=$('retailPeriodTo').value;
+    if(!start||!end||start>end)return {valid,bad,problem:'Укажите корректные даты начала и конца отчёта.'};
+    if(mapping.revenue<0||mapping.quantity<0||mapping.sku<0&&mapping.product<0)
+      return {valid,bad,problem:'Сопоставьте выручку, количество и артикул или название товара.'};
     for(let i=headerIndex+1;i<rows.length;i++){
       const cells=rows[i]||[];
-      if(!cells.length || cells.every(v=>String(v??'').trim()===''))continue;
-      const pick=key=>mapping[key]>=0?cells[mapping[key]]:'';
-      const date=xlsxDate(pick('date'));
-      const pname=String(pick('product')||'').trim();
-      const sku=String(pick('sku')||'').trim();
-      const rawOperation=String(pick('operation')||'').trim();
-      const footer=/^(итого|всего|total)(\s|:|$)/i.test(String(cells.find(x=>String(x||'').trim())||''));
-      if(!date){if(!footer)bad.push(i+1);continue;}
-      const isReturn=/возврат|сторно|refund|return/i.test(rawOperation);
-      let quantity=mapping.quantity>=0?numeric(pick('quantity')):1;
-      let revenue=mapping.revenue>=0?numeric(pick('revenue')):numeric(pick('unitPrice'))*Math.abs(quantity);
-      if(isReturn){quantity=-Math.abs(quantity);revenue=-Math.abs(revenue);}
-      valid.push({index:valid.length,date,product:pname||sku||'Товар без наименования',sku,orderId:String(pick('orderId')||'').trim(),
-        quantity,revenue,operation:rawOperation,commission:numeric(pick('commission')),logistics:numeric(pick('logistics')),cost:numeric(pick('cost'))});
-      if(valid.length>40000)return {valid:[],bad,problem:'Отчёт содержит более 40 000 строк. Разделите выгрузку на несколько файлов.'};
+      if(!cells.length||cells.every(x=>String(x??'').trim()===''))continue;
+      const value=key=>mapping[key]>=0?cells[mapping[key]]:'';
+      const title=String(value('product')||'').trim(),sku=String(value('sku')||'').trim();
+      if(!title&&!sku)continue;
+      const revenue=toNumber(value('revenue')),quantity=toNumber(value('quantity'));
+      if(!Number.isFinite(revenue)||!Number.isFinite(quantity)){
+        // Blank subtotal/footer rows are ignored; SKU rows with broken amounts are reported as errors.
+        if(/^(итого|всего|total)/i.test(title))continue;
+        bad.push(i+1);continue;
+      }
+      const margin=toNumber(value('marginPct'));
+      valid.push({index:valid.length,brand:String(value('brand')||'').trim(),product:title||sku,sku,
+        revenue,quantity,marginPct:Number.isFinite(margin)?margin:null});
+      if(valid.length>40000)return {valid:[],bad,problem:'Слишком много строк (более 40 000). Разбейте отчёт на части.'};
     }
-    return {valid,bad,problem:valid.length?'':'Нет ни одной строки с корректной датой и суммой продажи.'};
+    const problem=bad.length?`В ${bad.length} строках с товарами обнаружены некорректные числа: ${bad.slice(0,8).join(', ')}. Исправьте файл или сопоставление.`:
+      !valid.length?'В файле не обнаружены корректные продажи. Проверьте выбранную строку заголовков.':'';
+    return {valid,bad,problem,start,end};
   }
   function preview(){
     const r=extract();
-    const tbody=$('retailPreviewTable');
-    tbody.innerHTML=r.valid.slice(0,7).map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.sku||x.product)}</td><td>${count(x.quantity)}</td><td>${price(x.revenue)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-cell">Строки не распознаны.</td></tr>';
-    $('retailPreviewNote').textContent=r.problem||`Распознано ${count(r.valid.length)} строк; пропущено ${count(r.bad.length)} строк без корректной даты или строк итогов. ${r.bad.length?'Первые проблемные строки Excel: '+r.bad.slice(0,7).join(', ')+'.':''} Проверьте показатели и сопоставление перед импортом.`;
+    $('retailPreviewTable').innerHTML=r.valid.slice(0,8).map(x=>`<tr><td>${esc(x.sku||'—')}</td><td>${esc(x.product)}</td><td>${integer(x.quantity)}</td><td>${money(x.revenue)}</td><td>${x.marginPct===null?'—':integer(x.marginPct)+'%'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-cell">Нет распознанных товаров.</td></tr>';
     $('retailImportBtn').disabled=!!r.problem||importing;
-    setUpload(r.problem||`Лист: ${sheet?.name}. Для загрузки подготовлено ${count(r.valid.length)} строк. ${r.bad.length?'Есть пропуски — проверьте даты.':'Предпросмотр готов.'}`,r.problem?'bad':r.bad.length?'warn':'good');
+    const net=r.valid.reduce((a,x)=>a+x.revenue,0),qty=r.valid.reduce((a,x)=>a+x.quantity,0);
+    $('retailPreviewNote').textContent=r.problem||`Период ${readable(r.start)}–${readable(r.end)} · ${integer(r.valid.length)} строк SKU · ${money(net)} без НДС · ${integer(qty)} шт. Даты отдельных продаж в этом отчёте отсутствуют.`;
+    if(selectedFile)setUpload(r.problem||`Файл готов к импорту: ${integer(r.valid.length)} строк, ${money(net)}. Проверьте период и суммы.`,r.problem?'bad':'good');
     return r;
   }
-  async function onFile(e){
-    const f=e.target.files?.[0];
-    selectedFile=null;book=null;sha=null;
-    $('retailMappingPanel').hidden=true;
-    if(!f)return;
-    if(!/\.xlsx$/i.test(f.name)){setUpload('Для .xls сохраните файл как .xlsx через Excel или LibreOffice.','bad');return;}
-    if(f.size>20*1024*1024){setUpload('Файл больше 20 МБ. Разбейте отчёт на части.','bad');return;}
-    if(!window.ExcelJS){setUpload('Не загрузилась библиотека ExcelJS. Проверьте доступ к cdn.jsdelivr.net или подключите библиотеку локально.','bad');return;}
+  async function onFile(event){
+    selectedFile=null;book=null;sha=null;$('retailMappingPanel').hidden=true;
+    const f=event.target.files?.[0];if(!f)return;
+    if(!/\.xlsx$/i.test(f.name)){setUpload('Поддерживаются файлы Excel .xlsx.','bad');return;}
+    if(f.size>20*1024*1024){setUpload('Файл больше 20 МБ: разбейте выгрузку.','bad');return;}
+    if(!window.ExcelJS){setUpload('Не загрузилась библиотека ExcelJS. Проверьте соединение с cdn.jsdelivr.net.','bad');return;}
     try{
-      setUpload('Читаю Excel и проверяю структуру…');
-      const bytes=await f.arrayBuffer();
-      const hash=await crypto.subtle.digest('SHA-256',bytes);
-      sha=Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');
-      const wb=new ExcelJS.Workbook();await wb.xlsx.load(bytes);
-      book=wb;selectedFile=f;
-      const select=$('retailSheetSelect');select.textContent='';
-      wb.worksheets.forEach(ws=>select.add(new Option(`${ws.name} · ${count(ws.rowCount)} строк`,String(ws.id))));
-      if(!wb.worksheets.length)throw new Error('В книге нет листов');
-      select.disabled=false;select.value=String(wb.worksheets[0].id);setSheet();
-    }catch(err){setUpload('Не удалось прочитать Excel: '+(err.message||err),'bad');book=null;selectedFile=null;}
+      setUpload('Читаю структуру Excel…');const bytes=await f.arrayBuffer();
+      const digest=await crypto.subtle.digest('SHA-256',bytes);
+      sha=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');
+      const instance=new ExcelJS.Workbook();await instance.xlsx.load(bytes);
+      if(!instance.worksheets.length)throw Error('В книге нет листов');
+      book=instance;selectedFile=f;
+      const choice=$('retailSheetSelect');choice.textContent='';
+      book.worksheets.forEach(ws=>choice.add(new Option(`${ws.name} · ${integer(ws.rowCount)} строк`,String(ws.id))));
+      choice.disabled=false;choice.value=String(book.worksheets[0].id);setSheet();
+    }catch(e){selectedFile=null;book=null;setUpload('Не удалось прочитать Excel: '+(e.message||e),'bad');}
   }
-  async function doImport(){
+  async function importFile(){
     if(importing||!selectedFile||!sha)return;
-    const {valid,bad,problem}=preview();if(problem)return;
-    const overlaps=data.imports.filter(x=>x.status==='complete'&&x.dateFrom&&x.dateTo&&valid.some(r=>r.date>=x.dateFrom&&r.date<=x.dateTo));
-    const message=`Загрузить ${valid.length} строк из «${selectedFile.name}»?${bad.length?' Пропущено строк: '+bad.length+'.':''}${overlaps.length?' ВНИМАНИЕ: есть пересечение дат с '+overlaps.map(x=>x.filename).slice(0,3).join(', ')+'. Дубли продаж суммируются.':''}`;
-    if(!confirm(message))return;
-    importing=true;$('retailImportBtn').disabled=true;
-    let importId='';
+    const {valid,problem,start,end}=preview();if(problem)return;
+    const clashes=(dashboard.imports||[]).filter(x=>x.status==='complete'&&x.periodFrom<=end&&x.periodTo>=start);
+    if(clashes.length){setUpload('Нельзя импортировать пересекающийся период. Сначала удалите или замените '+clashes[0].filename+'.','bad');return;}
+    if(!confirm(`Импортировать ${integer(valid.length)} строк за ${readable(start)}–${readable(end)}? Сумма: ${money(valid.reduce((a,x)=>a+x.revenue,0))}.`))return;
+    importing=true;$('retailImportBtn').disabled=true;let id='';
     try{
-      const start=await req('/api/retail/import/start','POST',{filename:selectedFile.name,hash:sha,sheet:sheet.name,rows:valid.length});
-      importId=start.importId;
-      for(let i=0;i<valid.length;i+=100){
-        await req('/api/retail/import/chunk','POST',{importId,rows:valid.slice(i,i+100)});
-        setUpload(`Загружаю продажи: ${count(Math.min(i+100,valid.length))} из ${count(valid.length)} строк…`);
+      const startResult=await req('/api/retail/reports/import/start','POST',{hash:sha,filename:selectedFile.name,
+        sheet:sheet.name,periodFrom:start,periodTo:end,reportDate:suggestedPeriod?.reportDate||'',rows:valid.length});
+      id=startResult.importId;
+      for(let i=0;i<valid.length;i+=75){
+        await req('/api/retail/reports/import/chunk','POST',{importId:id,rows:valid.slice(i,i+75)});
+        setUpload(`Сохраняю отчёт: ${integer(Math.min(i+75,valid.length))} из ${integer(valid.length)} строк…`);
       }
-      const done=await req('/api/retail/import/finish','POST',{importId});
-      setUpload(`Файл «${selectedFile.name}» сохранён: ${count(done.imported)} строк (${done.from} — ${done.to}).`,'good');
-      await load(fromDate,toDate,siteSources,siteUtm);
-    }catch(err){
-      setUpload('Импорт не завершён: '+(err.message||err)+'. Незавершённый файл можно удалить в списке загрузок.','bad');
-      await load(fromDate,toDate,siteSources,siteUtm).catch(()=>{});
-    }finally{importing=false;$('retailImportBtn').disabled=false;}
+      await req('/api/retail/reports/import/finish','POST',{importId:id});
+      await load(fromDate,toDate);
+      setUpload(`Файл сохранён в D1: ${readable(start)}–${readable(end)}, ${integer(valid.length)} строк.`, 'good');
+      $('retailFile').value='';selectedFile=null;$('retailMappingPanel').hidden=true;
+    }catch(e){setUpload(`Импорт не завершён: ${e.message}. ${id?'Незавершённый импорт можно удалить в истории.':''}`,'bad');await load(fromDate,toDate).catch(()=>{});}
+    finally{importing=false;$('retailImportBtn').disabled=!selectedFile;}
   }
   function render(){
-    const daily=data.daily||[],products=data.products||[],coverage=data.coverage||{},orders=data.orders||{};
-    const total=(key)=>daily.reduce((a,d)=>a+n(d[key]),0);
-    const gross=total('sales'),refunds=total('refunds'),revenue=total('revenue'),qty=total('quantity');
-    const orderCnt=n(orders.value),noOrders=!n(orders.withOrderId);
+    const s=dashboard.summary||{},selected=dashboard.imports?.filter(x=>dashboard.selectedIds?.includes(x.id))||[];
+    const comp=dashboard.comparison||{},amount=num(s.revenue),ratio=comp.changePct;
+    const cmpNote=comp.previous?`К ${readable(comp.previous.periodFrom)}–${readable(comp.previous.periodTo)}.`:
+      comp.expected?`Для сравнения нужен отчёт ${readable(comp.expected.from)}–${readable(comp.expected.to)}.`:
+      'Сравниваются только одинаковые по охвату периоды.';
     const cards=[
-      ['Выручка от продаж',price(gross),'Положительные суммы в загруженных строках'],
-      ['Возвраты',price(refunds),'Отрицательные суммы и операции возврата'],
-      ['Чистая выручка',price(revenue),'Продажи за вычетом возвратов'],
-      ['Товары, нетто',count(qty)+' шт.','Количество с учётом возвратов'],
-      ['Заказы',noOrders?'—':count(orderCnt),noOrders?'В отчёте отсутствуют номера заказов':'Уникальные номера в выгрузке'],
-      ['Комиссии + логистика',price(total('commission')+total('logistics')),'Только суммы из сопоставленных колонок']
+      ['Выручка без НДС',money(amount),'Нетто за загруженные периоды'],
+      ['Динамика к прошлому месяцу',ratio===null||ratio===undefined?'—':`${ratio>0?'+':''}${integer(ratio)}%`,cmpNote],
+      ['Продажи, шт.',integer(s.quantity||0),'Количество с учётом отрицательных корректировок'],
+      ['Товарных строк',integer(s.positions||0),'SKU-строки из выбранных отчётов'],
+      ['Отрицательные корректировки',money(s.negative||0),'Отрицательная выручка; тип операции в файле не указан'],
+      ['Маржинальность (расчётная)',s.marginPct===null||s.marginPct===undefined?'—':integer(s.marginPct)+'%', 'Взвешена по положительной выручке с заполненным процентом']
     ];
-    $('retailMetrics').innerHTML=cards.map(([title,value,note])=>`<article class="metric-card"><div class="metric-top"><div class="metric-title">${esc(title)}</div></div><div class="metric-value">${esc(value)}</div><div class="metric-note">${esc(note)}</div></article>`).join('');
-    $('retailProductsTable').innerHTML=products.length?products.map(x=>`<tr><td>${esc(x.product)}</td><td>${esc(x.sku||'—')}</td><td>${count(x.quantity)}</td><td>${price(x.revenue)}</td><td>${count(x.rows)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty-cell">За выбранный период продаж нет.</td></tr>';
-    const files=(data.imports||[]).filter(x=>x.status==='complete');
-    const overlaps=[];
-    for(let i=0;i<files.length;i++)for(let j=i+1;j<files.length;j++)if(files[i].dateFrom&&files[j].dateFrom&&files[i].dateFrom<=files[j].dateTo&&files[j].dateFrom<=files[i].dateTo)overlaps.push([files[i].filename,files[j].filename]);
-    $('retailDataQuality').innerHTML=`<strong>${count(coverage.rows||0)} строк продаж</strong> за период ${esc(fromDate)} — ${esc(toDate)}. Задействовано файлов: ${count(coverage.imports||0)}. ${daily.length?`Фактические даты: ${esc(coverage.firstDate)} — ${esc(coverage.lastDate)}.`:'Нет загруженных операций в выбранном периоде.'}<br><br>Чистая выручка вычитает возвраты, но не комиссии и логистику. Комиссии учитываются отдельно; прибыль без подтверждённой себестоимости считать нельзя.${overlaps.length?`<br><br><strong style="color:#a65b14">Внимание: ${overlaps.length} пересечений дат между файлами — возможен двойной учёт продаж.</strong>`:''}`;
-    const refs=siteSources.filter(x=>/vseinstrumenti|все\s?инструмент/i.test(x.name||''));
-    const utms=siteUtm.filter(x=>/vseinstrumenti|все\s?инструмент/i.test([x.source,x.medium,x.campaign].join(' ')));
-    $('retailSiteSignal').innerHTML=`<strong>Сайт: переходы, связанные с ВсеИнструменты</strong><div>Источники Метрики: ${count(refs.reduce((a,x)=>a+n(x.visits),0))} визитов</div><div>UTM с упоминанием площадки: ${count(utms.reduce((a,x)=>a+n(x.visits),0))} визитов</div><small class="muted">Эти показатели относятся к переходам на ваш сайт и не измеряют просмотры карточек товара на маркетплейсе. Источники и UTM могут пересекаться — их не складывают.</small>`;
-    const imp=data.imports||[];
-    $('retailImportsTable').innerHTML=imp.length?imp.map(x=>`<tr><td>${esc(x.filename)} ${x.status==='pending'?'<span class="muted">(не завершён)</span>':''}<div class="muted">${esc(x.sheet||'')}</div></td><td>${esc(x.dateFrom||'—')} — ${esc(x.dateTo||'—')}</td><td>${count(x.rowCount)}</td><td>${esc(x.createdAt||'')}</td><td><button type="button" class="retail-delete" data-retail-delete="${esc(x.id)}">Удалить</button></td></tr>`).join(''):'<tr><td colspan="5" class="empty-cell">Файлы пока не загружены.</td></tr>';
-    $('retailImportsTable').querySelectorAll('[data-retail-delete]').forEach(b=>b.addEventListener('click',()=>deleteImport(b.dataset.retailDelete)));
+    $('retailMetrics').innerHTML=cards.map(([name,value,note])=>`<article class="metric-card"><div class="metric-top"><div class="metric-title">${esc(name)}</div></div><div class="metric-value">${esc(value)}</div><div class="metric-note">${esc(note)}</div></article>`).join('');
+    const products=dashboard.products||[],base=num(s.revenue);
+    $('retailProductsTable').innerHTML=products.length?products.map(x=>{
+      const margin=num(x.marginDenominator)>0?integer(num(x.marginNumerator)/num(x.marginDenominator))+'%':'—';
+      const share=base>0?integer(100*num(x.revenue)/base)+'%':'—';
+      return `<tr><td>${esc(x.product)}</td><td>${esc(x.sku||'—')}</td><td>${integer(x.quantity)}</td><td>${money(x.revenue)}</td><td>${esc(share)}</td><td>${esc(margin)}</td></tr>`;
+    }).join(''):'<tr><td colspan="6" class="empty-cell">Нет загруженных отчётов в выбранном периоде.</td></tr>';
+    const parts=[];
+    parts.push(`<strong>${integer(selected.length)} отчётов</strong> полностью попадают в выбранные даты ${esc(readable(fromDate))}–${esc(readable(toDate))}.`);
+    parts.push('Отчёты содержат суммы за период по SKU. Точные даты покупок и число заказов отсутствуют. График построен по периодам отчётов.');
+    parts.push('Выручка указана без НДС. Отрицательные корректировки выделены отдельно; их нельзя однозначно считать возвратами. Маржинальность взвешена по положительной выручке, поэтому не является рассчитанной чистой прибылью.');
+    if(s.marginCoverage>0)parts.push(`Доля положительной выручки с корректно интерпретируемой маржинальностью: ${integer(100*num(s.marginCoverage)/(num(s.gross)||1))}%.`);
+    if(s.marginOutliers)parts.push(`<strong class="retail-attention">Аномальная маржинальность: ${integer(s.marginOutliers)} строк. Сохраняем их продажи, но исключаем экстремальные проценты за пределами −200…100% из расчёта средневзвешенного показателя.</strong>`);
+    if((dashboard.partial||[]).length)parts.push(`<strong class="retail-attention">${dashboard.partial.length} отчётов пересекают выбранные даты, но не входят в них целиком. Их суммы исключены, чтобы не делить продажи по дням наугад.</strong>`);
+    $('retailDataQuality').innerHTML=parts.map(x=>`<p>${x}</p>`).join('');
+    const history=dashboard.history||[];
+    $('retailHistoryInfo').textContent=history.length?`Последние ${history.length} завершённых периодов. Даты на графике обозначают интервал отчёта, а не даты покупок.`:'Добавь первую выгрузку, чтобы построить динамику.';
+    const list=dashboard.imports||[];
+    $('retailImportsTable').innerHTML=list.length?list.map(x=>`<tr><td>${esc(x.filename)}<div class="muted">${esc(x.sheet||'')}</div></td><td>${esc(readable(x.periodFrom))}–${esc(readable(x.periodTo))}</td><td>${integer(x.rowCount)} ${x.status==='pending'?'(не завершён)':''}</td><td>${money(x.revenue)}</td><td>${esc(x.createdAt||'')}</td><td><button type="button" class="retail-delete" data-retail-delete="${esc(x.id)}">Удалить</button></td></tr>`).join(''):'<tr><td colspan="6" class="empty-cell">Отчёты ещё не загружены.</td></tr>';
+    $('retailImportsTable').querySelectorAll('[data-retail-delete]').forEach(b=>b.addEventListener('click',()=>deleteFile(b.dataset.retailDelete)));
     if(chart){chart.destroy();chart=null;}
-    if(window.Chart&&$('retailSalesChart')&&daily.length){
-      chart=new Chart($('retailSalesChart'),{type:'line',data:{labels:daily.map(x=>x.date.slice(5)),datasets:[
-        {label:'Чистая выручка',data:daily.map(x=>n(x.revenue)),borderColor:'#597acb',backgroundColor:'rgba(89,122,203,.13)',fill:true,tension:.25},
-        {label:'Возвраты',data:daily.map(x=>n(x.refunds)),borderColor:'#e29a5b',backgroundColor:'rgba(226,154,91,.12)',fill:false,tension:.25}
-      ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true,position:'bottom'}},scales:{x:{grid:{display:false},ticks:{maxTicksLimit:9}},y:{beginAtZero:false,ticks:{callback:v=>new Intl.NumberFormat('ru-RU',{notation:'compact'}).format(v)+' ₽'}}}}});
+    if(window.Chart&&history.length){
+      chart=new Chart($('retailSalesChart'),{type:'bar',data:{labels:history.map(x=>`${readable(x.periodFrom).slice(0,5)}–${readable(x.periodTo)}`),datasets:[
+        {label:'Положительная выручка',data:history.map(x=>num(x.gross)),backgroundColor:'rgba(91,92,246,.8)',borderRadius:5},
+        {label:'Отрицательные корректировки',data:history.map(x=>-num(x.negative)),backgroundColor:'rgba(231,137,90,.85)',borderRadius:5}
+      ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom'}},scales:{x:{ticks:{maxRotation:45,minRotation:0}},y:{ticks:{callback:x=>new Intl.NumberFormat('ru-RU',{notation:'compact'}).format(x)+' ₽'}}}}});
     }
   }
-  async function deleteImport(id){
-    const item=data.imports?.find(x=>x.id===id);if(!item)return;
-    if(!confirm(`Удалить файл «${item.filename}» и все связанные строки продаж? Действие нельзя отменить.`))return;
-    try{await req('/api/retail/import/'+encodeURIComponent(id),'DELETE');await load(fromDate,toDate,siteSources,siteUtm);}
-    catch(e){setUpload('Не удалось удалить файл: '+e.message,'bad');}
+  async function deleteFile(id){
+    const file=dashboard.imports?.find(x=>x.id===id);if(!file)return;
+    if(!confirm(`Удалить отчёт «${file.filename}» за ${readable(file.periodFrom)}–${readable(file.periodTo)}? Его данные исчезнут из графиков.`))return;
+    try{await req('/api/retail/reports/import/'+encodeURIComponent(id),'DELETE');await load(fromDate,toDate);setUpload('Отчёт удалён.','good');}
+    catch(e){setUpload('Не удалось удалить: '+e.message,'bad');}
   }
-  async function load(from,to,sources=[],utms=[]){
+  async function load(from,to){
     if(!from||!to)return;
-    fromDate=from;toDate=to;siteSources=Array.isArray(sources)?sources:[];siteUtm=Array.isArray(utms)?utms:[];
-    try{data=await req(`/api/retail?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);render();}
-    catch(e){$('retailDataQuality').textContent='Не удалось загрузить данные розницы: '+e.message;}
+    fromDate=from;toDate=to;
+    try{dashboard=await req(`/api/retail/reports?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);render();}
+    catch(e){$('retailDataQuality').textContent='Не удалось получить отчёты из D1: '+e.message;}
+  }
+  async function showCounters(){
+    const panel=$('metrikaCounterCheck'),button=$('metrikaCounterCheckBtn');
+    panel.textContent='Проверяю доступ Яндекс Метрики…';button.disabled=true;
+    try{
+      const result=await req('/api/metrika/counters');const ids=result.retailIds||[];
+      const counters=result.counters||[];
+      panel.innerHTML=`<strong>Доступно счётчиков: ${integer(counters.length)}</strong>. Основной: ${esc(result.primaryId||'не выбран')}. Розничные: ${esc(ids.join(', ')||'ещё не настроены')}.<div class="table-scroll"><table><thead><tr><th>ID</th><th>Название</th><th>Сайт</th><th>Доступ</th></tr></thead><tbody>${counters.map(c=>`<tr><td>${esc(c.id)}</td><td>${esc(c.name)}</td><td>${esc(c.site)}</td><td>${esc(c.permission)}</td></tr>`).join('')}</tbody></table></div>`;
+    }catch(e){panel.textContent='Проверка доступа не прошла: '+e.message;}
+    finally{button.disabled=false;}
   }
   function init(){
     if(initDone)return;initDone=true;
     $('retailFile')?.addEventListener('change',onFile);
     $('retailSheetSelect')?.addEventListener('change',setSheet);
     $('retailHeaderRow')?.addEventListener('change',setHeaders);
-    $('retailImportBtn')?.addEventListener('click',doImport);
-    $('retailReloadBtn')?.addEventListener('click',()=>load(fromDate,toDate,siteSources,siteUtm));
+    $('retailPeriodFrom')?.addEventListener('change',preview);
+    $('retailPeriodTo')?.addEventListener('change',preview);
+    $('retailImportBtn')?.addEventListener('click',importFile);
+    $('retailReloadBtn')?.addEventListener('click',()=>load(fromDate,toDate));
+    $('metrikaCounterCheckBtn')?.addEventListener('click',showCounters);
   }
   window.CSRetail={init,load,isImporting:()=>importing};
 })();

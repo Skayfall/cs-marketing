@@ -158,3 +158,11 @@ body{font-size:14px}.app-shell{grid-template-columns:238px minmax(0,1fr)}
 @media(max-width:620px){.retail-intro{flex-direction:column;align-items:flex-start}.retail-import-controls,.retail-mapping-grid{grid-template-columns:1fr}.retail-sync-toolbar{justify-content:flex-start}}
 
 .retail-catalog-panel{margin-bottom:16px}.retail-catalog-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.retail-catalog-grid>div{padding:13px;background:#f7f9fc;border:1px solid var(--line);border-radius:12px}.retail-catalog-grid strong{display:block;font-size:25px;line-height:1.3;letter-spacing:-.03em}.retail-catalog-grid span{display:block;font-size:11px;color:var(--muted);margin-top:4px}@media(max-width:830px){.retail-catalog-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:500px){.retail-catalog-grid{grid-template-columns:repeat(2,1fr)}}
+
+/* Retail report v2.10 */
+.retail-attention{color:#b66527}
+.retail-quality p{margin:0 0 12px;line-height:1.55}
+.retail-quality p:last-child{margin-bottom:0}
+.retail-import-controls .input{min-width:150px;max-width:230px}
+#retailHistoryInfo{padding:8px 16px 16px}
+#metrikaCounterCheck .table-scroll{margin-top:12px;max-height:340px;overflow:auto}

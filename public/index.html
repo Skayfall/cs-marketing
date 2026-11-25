@@ -10,7 +10,7 @@
 <link href="/icon-192.png" rel="apple-touch-icon"/>
 <link href="/manifest.webmanifest" rel="manifest"/>
 <link href="https://cdn.jsdelivr.net" rel="preconnect"/>
-<link href="/styles.css?v=2.9.0" rel="stylesheet"/>
+<link href="/styles.css?v=2.10.0" rel="stylesheet"/>
 </head>
 <body>
 <section aria-labelledby="authTitle" class="auth-screen" id="authScreen">
@@ -44,7 +44,7 @@
 <button class="nav-item" data-view="reports"><span class="nav-glyph">⇩</span><span>Отчёты</span></button>
 <button class="nav-item" data-view="integrations"><span class="nav-glyph">⚙</span><span>Интеграции</span></button>
 </nav>
-<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.9.0 · рабочий центр</div>
+<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.10.0 · рабочий центр</div>
 <div class="sync-pill"><span class="dot" id="syncDot"></span><span id="syncText">Проверяю источники…</span></div>
 <div class="account-row"><span class="account-avatar">A</span><div><strong id="accountName">admin</strong><span>доступ к кабинету</span></div></div>
 <button class="ghost-btn full logout-btn" id="logoutBtn">Выйти</button>
@@ -119,42 +119,43 @@
 </div>
 </section>
 <section class="view" id="retail">
-  <div class="retail-intro">
-    <div><div class="eyebrow">Розничный канал · ВсеИнструменты</div><h2>Продажи и экономика маркетплейса</h2>
-      <p class="muted">Аналитика по фактически загруженным Excel-отчётам. Период выбирается в общей панели сверху. Загрузки хранятся в D1.</p></div>
-    <a class="secondary-btn retail-external" href="https://www.cs-trade.ru/retail/" target="_blank" rel="noopener noreferrer">Раздел «Розница» на сайте ↗</a>
-  </div>
-  <article class="panel retail-catalog-panel">
-    <div class="panel-head"><div><div class="eyebrow">Ассортимент на сайте компании</div><h3>Продукция ЦС на ВсеИнструменты</h3><p class="muted">Справочная информация из раздела <a href="https://www.cs-trade.ru/retail/" target="_blank" rel="noopener noreferrer">cs-trade.ru/retail/</a>. Числа отражают опубликованный ассортимент и не синхронизируются с кабинетом маркетплейса.</p></div></div>
-    <div class="retail-catalog-grid"><div><strong>135</strong><span>Смесители</span></div><div><strong>31</strong><span>Душевые решения</span></div><div><strong>448</strong><span>Гибкая подводка</span></div><div><strong>500+</strong><span>Комплектующие</span></div><div><strong>700+</strong><span>Товаров на странице бренда</span></div></div>
-  </article>
+  <div class="retail-intro"><div><div class="eyebrow">Розница · ВсеИнструменты</div><h2>Продажи по Excel-отчётам</h2>
+    <p class="muted">Данные из выгрузок ВсеИнструменты. Сводные отчёты содержат результаты по артикулам за указанный период. Используй общий фильтр дат сверху.</p></div></div>
   <div class="metric-grid" id="retailMetrics"></div>
   <div class="two-col wide-left">
-    <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Продажи</div><h3>Выручка и возвраты по дням</h3></div></div><div class="chart-wrap"><canvas id="retailSalesChart"></canvas></div></article>
-    <article class="panel"><div class="panel-head"><div><div class="eyebrow">Качество данных</div><h3>На основе чего рассчитано</h3></div></div><div id="retailDataQuality" class="retail-quality muted">Загрузка отчётов ещё не выполнялась.</div><div class="retail-site-signal" id="retailSiteSignal"></div></article>
+    <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика продаж</div><h3>Выручка по отчётным периодам</h3></div></div>
+      <div class="chart-wrap"><canvas id="retailSalesChart"></canvas></div><div id="retailHistoryInfo" class="muted retail-small">Загрузка истории…</div></article>
+    <article class="panel"><div class="panel-head"><div><div class="eyebrow">Методика</div><h3>Что показывают цифры</h3></div></div>
+      <div id="retailDataQuality" class="retail-quality muted">Загрузка данных…</div></article>
   </div>
-  <article class="panel"><div class="panel-head"><div><div class="eyebrow">Ассортимент</div><h3>Лидеры продаж по чистой выручке</h3></div></div>
-    <div class="table-scroll"><table><thead><tr><th>Товар</th><th>Артикул</th><th>Количество, шт.</th><th>Выручка за вычетом возвратов</th><th>Строк</th></tr></thead><tbody id="retailProductsTable"><tr><td colspan="5" class="empty-cell">Нет загруженных продаж.</td></tr></tbody></table></div>
+  <article class="panel"><div class="panel-head"><div><div class="eyebrow">Ассортимент из отчётов</div><h3>ТОП товаров по выручке</h3>
+    <p class="muted">Данные по SKU из загруженных файлов. Сортировка по выручке без НДС с учётом отрицательных корректировок.</p></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Наименование</th><th>Артикул</th><th>Шт.</th><th>Выручка</th><th>Доля</th><th>Маржинальность</th></tr></thead>
+      <tbody id="retailProductsTable"><tr><td colspan="6" class="empty-cell">Нет загруженных отчётов.</td></tr></tbody></table></div>
   </article>
   <article class="panel retail-upload-panel">
-    <div class="panel-head"><div><div class="eyebrow">Загрузка отчётов</div><h3>Импорт Excel по продажам</h3><p class="muted">Поддерживаются .xlsx. Сначала выберите лист и сверьте названия колонок. Файл целиком остаётся в браузере, на сервер отправляются только выбранные строки продаж.</p></div></div>
+    <div class="panel-head"><div><div class="eyebrow">Импорт</div><h3>Загрузить отчёт ВсеИнструменты</h3>
+      <p class="muted">Поддерживается Excel .xlsx с периодом в шапке, выручкой без НДС, количеством, артикулом и маржинальностью. Файл обрабатывается локально в браузере; строки сохраняются в Cloudflare D1.</p></div></div>
     <div class="retail-import-controls">
-      <label class="retail-file-label">Отчёт о продажах (.xlsx)<input type="file" id="retailFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/></label>
+      <label class="retail-file-label">Excel-отчёт (.xlsx)<input type="file" id="retailFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/></label>
       <label>Лист Excel<select class="select" id="retailSheetSelect" disabled><option value="">Выберите файл</option></select></label>
-      <label>Строка заголовков<select class="select" id="retailHeaderRow" disabled><option value="">Выберите файл</option></select></label>
+      <label>Заголовки в строке<select class="select" id="retailHeaderRow" disabled><option value="">Выберите файл</option></select></label>
+      <label>Начало периода<input class="input" type="date" id="retailPeriodFrom"/></label>
+      <label>Конец периода<input class="input" type="date" id="retailPeriodTo"/></label>
     </div>
-    <div id="retailUploadState" class="retail-upload-state muted">Выберите файл. Данные появятся в предварительном просмотре перед загрузкой.</div>
+    <div id="retailUploadState" class="retail-upload-state muted">Выберите Excel-файл, чтобы увидеть предпросмотр и проверить период.</div>
     <div id="retailMappingPanel" hidden>
-      <h4>Сопоставление столбцов</h4><p class="muted retail-small">Дата и сумма продажи обязательны. Если готовой суммы нет, можно сопоставить цену за единицу и количество. Прочие показатели заполняются только при наличии соответствующих столбцов.</p>
-      <div class="retail-mapping-grid" id="retailMappingFields"></div>
-      <h4>Предпросмотр строк</h4><div class="table-scroll"><table><thead><tr><th>Дата</th><th>Артикул / товар</th><th>Кол-во</th><th>Сумма, ₽</th></tr></thead><tbody id="retailPreviewTable"></tbody></table></div>
-      <p id="retailPreviewNote" class="muted retail-small"></p>
-      <div class="button-row"><button class="primary-btn" type="button" id="retailImportBtn">Импортировать продажи</button></div>
+      <h4>Сопоставление столбцов</h4><p class="muted retail-small">Названия полей определяются автоматически. Убедись, что выручка взята из столбца «Выручка без НДС», а проценты маржинальности из правильной колонки.</p>
+      <div id="retailMappingFields" class="retail-mapping-grid"></div>
+      <h4>Проверка сумм</h4><div class="table-scroll"><table><thead><tr><th>Артикул</th><th>Товар</th><th>Шт.</th><th>Выручка</th><th>Маржинальность</th></tr></thead><tbody id="retailPreviewTable"></tbody></table></div>
+      <p id="retailPreviewNote" class="muted retail-small"></p><div class="button-row"><button class="primary-btn" id="retailImportBtn" type="button">Сохранить отчёт</button></div>
     </div>
   </article>
-  <article class="panel"><div class="panel-head"><div><div class="eyebrow">История</div><h3>Загруженные файлы</h3><button class="secondary-btn" id="retailReloadBtn" type="button">Обновить список</button></div></div>
-    <div class="table-scroll"><table><thead><tr><th>Имя файла</th><th>Период</th><th>Строк</th><th>Дата импорта</th><th>Действие</th></tr></thead><tbody id="retailImportsTable"><tr><td colspan="5" class="empty-cell">Файлов пока нет.</td></tr></tbody></table></div>
-    <p class="muted retail-small">Два разных файла с пересекающимися периодами могут содержать одни и те же продажи. Перед повторным импортом проверьте пересечения, чтобы не удвоить выручку.</p>
+  <article class="panel"><div class="panel-head"><div><div class="eyebrow">История</div><h3>Загруженные отчёты</h3></div>
+    <button class="secondary-btn" id="retailReloadBtn" type="button">Обновить список</button></div>
+    <div class="table-scroll"><table><thead><tr><th>Файл</th><th>Период</th><th>SKU-строк</th><th>Выручка без НДС</th><th>Загружен</th><th></th></tr></thead>
+      <tbody id="retailImportsTable"><tr><td colspan="6" class="empty-cell">Отчётов пока нет.</td></tr></tbody></table></div>
+    <p class="muted retail-small">Пересекающиеся сводные периоды блокируются: повторная загрузка без замены исказит выручку. Для сравнения с прошлым месяцем нужны отчёты за сопоставимые даты.</p>
   </article>
 </section>
 <section class="view" id="business">
@@ -303,7 +304,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="/retail.js?v=2.9.0"></script>
-<script src="/app.js?v=2.9.0"></script>
+<script src="/retail.js?v=2.10.0"></script>
+<script src="/app.js?v=2.10.0"></script>
 </body>
 </html>
