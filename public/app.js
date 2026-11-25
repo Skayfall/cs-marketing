@@ -104,7 +104,7 @@
           if(progress)progress.textContent='Обновляется: '+syncLabel(source)+' · выполнено '+completed;
           updateSyncButtonStates();
           try{
-            const data=await fetchJson('/api/sync/'+encodeURIComponent(source),{method:'POST'});
+            const data=await fetchJson('/api/sync/'+encodeURIComponent(source),{method:'POST',signal:AbortSignal.timeout(180000)});
             results.push({source,ok:!['partial','error','pending'].includes(data.syncStatus),status:data.syncStatus||'ok',message:data.syncMessage||data.message||'Обновлено'});
           }catch(e){
             results.push({source,ok:false,message:e.message||'Ошибка синхронизации'});
