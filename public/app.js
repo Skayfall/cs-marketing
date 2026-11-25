@@ -62,28 +62,75 @@
   }
   let syncBusy=false;
   let lastForegroundRefresh=0;
+  // A user-requested sync should be prioritized over the remaining automatic jobs.
+  const pendingManualSync=[];
+  const activeSyncSources=new Set();
   const AUTO_FRESH_HOURS={metrika:8,webmaster:12,searchconsole:12,ybusiness:12,direct:8,vkads:12,vksocial:24,telegram:24,maxsocial:24,dzen:24,unisender:12};
+  function syncLabel(source){return integrations.find(x=>x[0]===source)?.[1]||source;}
+  function updateSyncButtonStates(){
+    document.querySelectorAll('.sync-one').forEach(b=>{
+      const source=b.dataset.source,active=activeSyncSources.has(source),queued=pendingManualSync.includes(source);
+      b.disabled=active||queued||!apiStatus.integrations?.[source]?.configured;
+      b.textContent=active?'Обновляется…':queued?'В очереди…':'Синхронизировать';
+    });
+  }
   async function runSyncQueue(sources,automatic=false){
-    if(syncBusy||!sources.length)return;
+    const requested=[...new Set((sources||[]).filter(Boolean))];
+    if(!requested.length)return;
+    if(syncBusy){
+      if(!automatic){
+        const added=requested.filter(source=>!activeSyncSources.has(source)&&!pendingManualSync.includes(source));
+        pendingManualSync.push(...added);
+        updateSyncButtonStates();
+        if(added.length)showAlert('Ручная синхронизация в очереди с приоритетом: '+added.map(syncLabel).join(', ')+'. Текущие запросы завершатся первыми.');
+        else showAlert('Этот источник уже обновляется либо ожидает выполнения.');
+        const progress=document.getElementById('syncProgress');
+        if(progress&&added.length)progress.textContent='Ручное обновление в очереди: '+added.map(syncLabel).join(', ');
+      }
+      return;
+    }
     syncBusy=true;
-    const btns=[document.getElementById('syncBtn'),document.getElementById('syncAllBtn')];
-    btns.forEach(b=>{if(b)b.disabled=true;});
     const progress=document.getElementById('syncProgress');
-    const results=[];let cursor=0,completed=0;
+    const results=[],processed=new Set();
+    let cursor=0,completed=0,manualProcessed=0;
     try{
-      const worker=async()=>{while(cursor<sources.length){const source=sources[cursor++];
-        try{const data=await fetchJson(`/api/sync/${source}`,{method:'POST'});results.push({source,ok:!['partial','error','pending'].includes(data.syncStatus),status:data.syncStatus||'ok',message:data.syncMessage||data.message||'Обновлено'});}
-        catch(e){results.push({source,ok:false,message:e.message||'Ошибка синхронизации'});}
-        completed++;
-        if(progress)progress.textContent=`${automatic?'Автосинхронизация':'Синхронизация'}: ${completed}/${sources.length} источников`;
-      }};
-      await Promise.all(Array.from({length:Math.min(2,sources.length)},worker));
+      const worker=async()=>{
+        while(cursor<requested.length||pendingManualSync.length){
+          const manual=pendingManualSync.length>0;
+          const source=manual?pendingManualSync.shift():requested[cursor++];
+          if(!source||(!manual&&processed.has(source)))continue;
+          processed.add(source);
+          activeSyncSources.add(source);
+          if(progress)progress.textContent='Обновляется: '+syncLabel(source)+' · выполнено '+completed;
+          updateSyncButtonStates();
+          try{
+            const data=await fetchJson('/api/sync/'+encodeURIComponent(source),{method:'POST'});
+            results.push({source,ok:!['partial','error','pending'].includes(data.syncStatus),status:data.syncStatus||'ok',message:data.syncMessage||data.message||'Обновлено'});
+          }catch(e){
+            results.push({source,ok:false,message:e.message||'Ошибка синхронизации'});
+          }finally{
+            activeSyncSources.delete(source);
+            completed++;
+            if(manual)manualProcessed++;
+            updateSyncButtonStates();
+            if(progress)progress.textContent='Синхронизация: выполнено '+completed+' · в работе '+activeSyncSources.size+(pendingManualSync.length?' · ручных запросов в очереди '+pendingManualSync.length:'');
+          }
+        }
+      };
+      await Promise.all(Array.from({length:Math.min(2,requested.length)},()=>worker()));
       await Promise.all([loadData(),fetchStatus()]);
       const failures=results.filter(x=>!x.ok);
-      if(progress)progress.textContent=failures.length?`${completed} проверено · ошибок ${failures.length}`:`${completed} источников проверено · данные обновлены`;
-      if(failures.length)showAlert(`Ошибки ${failures.length} источников: ${failures.map(x=>`${x.source}: ${x.message}`).join('; ').slice(0,450)}. Подробности — в «Интеграциях».`,'error');
-      else if(!automatic)showAlert(`Успешно синхронизировано ${completed} источников.`,'success');
-    }finally{syncBusy=false;btns.forEach(b=>{if(b)b.disabled=false;});}
+      if(progress)progress.textContent=failures.length?completed+' проверено · ошибок '+failures.length:completed+' источников проверено · данные обновлены';
+      if(failures.length)showAlert('Ошибки '+failures.length+' источников: '+failures.map(x=>x.source+': '+x.message).join('; ').slice(0,450)+'. Подробности — в «Интеграциях».','error');
+      else if(!automatic||manualProcessed)showAlert('Успешно синхронизировано '+completed+' источников.','success');
+    }finally{
+      syncBusy=false;
+      activeSyncSources.clear();
+      updateSyncButtonStates();
+      // Cover manual clicks made while the post-sync dashboard was being refreshed.
+      const remaining=pendingManualSync.splice(0);
+      if(remaining.length)void runSyncQueue(remaining,false).catch(e=>showAlert(e.message||'Ошибка синхронизации','error'));
+    }
   }
   function staleSources(){
     const now=Date.now();
@@ -637,7 +684,7 @@
   const integrations=[
     ['metrika','Яндекс Метрика','Сайт: посещаемость, поведение, цели, UTM, поисковые фразы'],['webmaster','Яндекс Вебмастер','SEO Яндекса: запросы, позиции, индексация, диагностика'],['searchconsole','Google Search Console','SEO Google: клики, показы, CTR, позиции, запросы, страницы и устройства'],['ybusiness','Яндекс Бизнес / Карты','Автоматический счётчик профиля в Метрике: визиты, пользователи, звонки, маршруты и другие системные действия'],['direct','Яндекс Директ','Кампании, расходы, клики, конверсии, поведение после клика'],['vkads','VK Реклама (ads.vk.com)','Рекламный контур: кампании, расходы и статистика; access token обновляется автоматически'],['vksocial','VK — публичный контент','При каждом обновлении приложение проверяет https://vk.ru/centr_santechniki; API сообщества используется только как дополнительный источник'],['telegram','Telegram — публичный контент','При каждом обновлении проверяется https://t.me/CS_trade_official и сохраняются названия постов и доступные просмотры'],['maxsocial','MAX — публичный контент','При каждом обновлении проверяется https://max.ru/id7724208038_biz; Bot API используется дополнительно, если настроен'],['dzen','Дзен — публичный контент','При каждом обновлении проверяется https://dzen.ru/centr_santehniki и сохраняются доступные метрики публикаций'],['unisender','UniSender','Рассылки, доставляемость, открытия, клики и ссылки']
   ];
-  function renderIntegrations(){const grid=document.getElementById('integrationGrid');if(!grid)return;grid.innerHTML=integrations.map(([id,name,desc])=>{const s=apiStatus.integrations?.[id]||{},ok=Boolean(s.configured??s.connected),cls=!ok?'warn':s.status==='error'?'bad':s.status==='partial'||s.status==='pending'?'warn':'good',label=!ok?'Нужны доступы':s.status?statusLabel(s.status):s.mode==='public-web'?'Публичная страница':'Не проверено';return `<article class="integration-card"><div class="integration-title"><strong>${name}</strong>${pill(label,cls)}</div><p>${esc(desc)}</p><div class="integration-meta">${s.lastSync?`Последняя синхронизация: ${esc(dateTimeRu(s.lastSync))}`:'Синхронизация ещё не выполнялась'}${s.message?`<br>${esc(s.message)}`:''}${s.missing?.length?`<br>Не хватает: ${s.missing.map(esc).join(', ')}`:''}</div><button class="secondary-btn sync-one" data-source="${id}" ${ok?'':'disabled'}>Синхронизировать</button></article>`}).join('');grid.querySelectorAll('.sync-one').forEach(b=>b.addEventListener('click',()=>syncOne(b.dataset.source)));
+  function renderIntegrations(){const grid=document.getElementById('integrationGrid');if(!grid)return;grid.innerHTML=integrations.map(([id,name,desc])=>{const s=apiStatus.integrations?.[id]||{},ok=Boolean(s.configured??s.connected),cls=!ok?'warn':s.status==='error'?'bad':s.status==='partial'||s.status==='pending'?'warn':'good',label=!ok?'Нужны доступы':s.status?statusLabel(s.status):s.mode==='public-web'?'Публичная страница':'Не проверено';return `<article class="integration-card"><div class="integration-title"><strong>${name}</strong>${pill(label,cls)}</div><p>${esc(desc)}</p><div class="integration-meta">${s.lastSync?`Последняя синхронизация: ${esc(dateTimeRu(s.lastSync))}`:'Синхронизация ещё не выполнялась'}${s.message?`<br>${esc(s.message)}`:''}${s.missing?.length?`<br>Не хватает: ${s.missing.map(esc).join(', ')}`:''}</div><button class="secondary-btn sync-one" data-source="${id}" ${ok?'':'disabled'}>Синхронизировать</button></article>`}).join('');grid.querySelectorAll('.sync-one').forEach(b=>b.addEventListener('click',()=>syncOne(b.dataset.source)));updateSyncButtonStates();
     const required=[['ADMIN_PASSWORD','Secret','авторизация'],['ADMIN_USERNAME','Text','логин'],['SESSION_SECRET','Secret','сессия'],['SITE_URL','Text','поиск счётчика/хоста'],['YANDEX_TOKEN','Secret','Метрика + Вебмастер + Директ'],['UNISENDER_API_KEY','Secret','UniSender'],['VK_ADS_CLIENT_ID','Text','VK Реклама OAuth'],['VK_ADS_CLIENT_SECRET','Secret','VK Реклама OAuth']];
     const optional=[['METRIKA_COUNTER_ID','Text','основной счётчик сайта: сохраняет статистику сайта отдельно от розничных счётчиков'],['WEBMASTER_HOST_ID','Text','ID сайта в Яндекс Вебмастере'],['METRIKA_RETAIL_COUNTER_IDS','Text','ID дополнительных розничных счётчиков через запятую; не смешиваются со статистикой сайта'],['GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON','Secret','рекомендуемый вариант: весь JSON сервисного аккаунта Search Console одной переменной'],['GOOGLE_SEARCH_CONSOLE_EMAIL','Text','альтернатива JSON: client_email сервисного аккаунта'],['GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY','Secret','альтернатива JSON: private_key сервисного аккаунта'],['GOOGLE_SEARCH_CONSOLE_PROPERTY','Text','опционально: sc-domain:cs-trade.ru или точный URL-prefix ресурса'],['VK_COMMUNITY_TOKEN','Secret','опционально: расширенная статистика VK-сообщества'],['TELEGRAM_CHANNEL_URL','Text','опционально: другой публичный Telegram URL'],['MAX_BOT_TOKEN','Secret','опционально: расширение MAX через Bot API'],['MAX_CHANNEL_ID','Text','опционально: ID канала MAX для Bot API'],['VK_SERVICE_TOKEN','Secret','read-токен VK для wall.get; основной вариант для автоматической загрузки постов'],['VK_CLIENT_TOKEN','Secret','альтернативное имя read-токена VK; приложение поддерживает его наравне с VK_SERVICE_TOKEN'],['VK_APP_ID','Text','опционально: ID приложения VK; вместе с VK_APP_SECRET позволяет получать серверный токен автоматически'],['VK_APP_SECRET','Secret','опционально: защищённый ключ приложения VK'],['VK_USER_TOKEN','Secret','опционально: пользовательский read-token для постов VK'],['VK_COMMUNITY_URL','Text','опционально: публичная страница VK для резервного чтения постов'],['VK_GROUP_ID','Text','опционально: ID сообщества, если автоопределение не сработало']];
     const all=[...required,...optional];document.getElementById('credentialChecklist').innerHTML=all.map(([k,t,use])=>`<tr><td><code>${k}</code></td><td>${t}</td><td>${apiStatus.runtime?.[k]?pill('Есть','good'):pill(optional.some(x=>x[0]===k)?'Опционально':'Нет',optional.some(x=>x[0]===k)?'info':'bad')}</td><td>${esc(use)}</td></tr>`).join('');const missing=required.filter(([k])=>!apiStatus.runtime?.[k]).map(x=>x[0]);document.getElementById('runtimeSummary').innerHTML=missing.length?`Не хватает обязательных параметров: <strong>${missing.map(esc).join(', ')}</strong>`:'<strong>Все обязательные параметры текущей конфигурации присутствуют.</strong>';
