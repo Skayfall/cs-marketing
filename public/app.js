@@ -49,17 +49,90 @@
   let currentUser = null;
   let adChannelFilter = 'Все';
   // Всё рабочее состояние живёт на сервере в D1.
-  async function apiFetch(url,options={}){const h=new Headers(options.headers||{});return fetch(url,{...options,headers:h,credentials:'include',cache:'no-store'});}
+  async function apiFetch(url,options={}){
+    const h=new Headers(options.headers||{});
+    const r=await fetch(url,{...options,headers:h,credentials:'include',cache:'no-store',signal:options.signal||AbortSignal.timeout(options.method==='POST'?90000:25000)});
+    if(r.status===401 && !url.includes('/api/auth/'))showAuth('Сессия истекла. Войдите снова, чтобы получить свежие данные.');
+    return r;
+  }
+  async function fetchJson(url,options={}){
+    const r=await apiFetch(url,options),d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`HTTP ${r.status} · ${url}`);
+    return d;
+  }
+  let syncBusy=false;
+  let lastForegroundRefresh=0;
+  const AUTO_FRESH_HOURS={metrika:8,webmaster:12,searchconsole:12,ybusiness:12,direct:8,vkads:12,vksocial:24,telegram:24,maxsocial:24,dzen:24,unisender:12};
+  async function runSyncQueue(sources,automatic=false){
+    if(syncBusy||!sources.length)return;
+    syncBusy=true;
+    const btns=[document.getElementById('syncBtn'),document.getElementById('syncAllBtn')];
+    btns.forEach(b=>{if(b)b.disabled=true;});
+    const progress=document.getElementById('syncProgress');
+    const results=[];let cursor=0,completed=0;
+    try{
+      const worker=async()=>{while(cursor<sources.length){const source=sources[cursor++];
+        try{const data=await fetchJson(`/api/sync/${source}`,{method:'POST'});results.push({source,ok:!['partial','error','pending'].includes(data.syncStatus),status:data.syncStatus||'ok',message:data.syncMessage||data.message||'Обновлено'});}
+        catch(e){results.push({source,ok:false,message:e.message||'Ошибка синхронизации'});}
+        completed++;
+        if(progress)progress.textContent=`${automatic?'Автосинхронизация':'Синхронизация'}: ${completed}/${sources.length} источников`;
+      }};
+      await Promise.all(Array.from({length:Math.min(2,sources.length)},worker));
+      await Promise.all([loadData(),fetchStatus()]);
+      const failures=results.filter(x=>!x.ok);
+      if(progress)progress.textContent=failures.length?`${completed} проверено · ошибок ${failures.length}`:`${completed} источников проверено · данные обновлены`;
+      if(failures.length)showAlert(`Ошибки ${failures.length} источников: ${failures.map(x=>`${x.source}: ${x.message}`).join('; ').slice(0,450)}. Подробности — в «Интеграциях».`,'error');
+      else if(!automatic)showAlert(`Успешно синхронизировано ${completed} источников.`,'success');
+    }finally{syncBusy=false;btns.forEach(b=>{if(b)b.disabled=false;});}
+  }
+  function staleSources(){
+    const now=Date.now();
+    return Object.entries(AUTO_FRESH_HOURS).filter(([id,hours])=>{
+      const x=apiStatus.integrations?.[id];if(!x?.configured)return false;
+      const ts=x.lastSync?Date.parse(String(x.lastSync).replace(' ','T')+'Z'):0;
+      const coolDown=x.status==='error'?2:hours;
+      return !Number.isFinite(ts)||!ts||now-ts>coolDown*3600000;
+    }).map(([id])=>id);
+  }
+  async function refreshStaleSources(){if(syncBusy||!currentUser)return;
+    const sources=staleSources();if(sources.length)await runSyncQueue(sources,true);
+  }
+  async function checkVersion(){
+    try{const {version}=await fetchJson('/api/version');
+      if(version&&version!=='2.9.0'&&document.visibilityState==='visible'&&!window.CSRetail?.isImporting?.()){
+        showAlert(`Выпущена новая версия ${version}. Обновляю интерфейс…`);
+        window.location.reload();
+      }
+    }catch{}
+  }
+
   function showAlert(text,type=''){const el=document.getElementById('globalAlert');el.textContent=text;el.className=`alert ${type}`;el.hidden=false;clearTimeout(showAlert.t);showAlert.t=setTimeout(()=>el.hidden=true,7000);}
 
   function showAuth(message=''){currentUser=null;document.getElementById('appShell').hidden=true;document.getElementById('authScreen').hidden=false;const e=document.getElementById('authError');e.textContent=message;e.hidden=!message;document.getElementById('passwordInput').value='';}
-  async function showApp(user){currentUser=user||'admin';document.getElementById('authScreen').hidden=true;document.getElementById('appShell').hidden=false;document.getElementById('accountName').textContent=currentUser;renderAll();await Promise.all([fetchStatus(),loadData()]);}
+  async function showApp(user){
+    currentUser=user||'admin';document.getElementById('authScreen').hidden=true;
+    document.getElementById('appShell').hidden=false;document.getElementById('accountName').textContent=currentUser;
+    renderAll();await Promise.all([fetchStatus(),loadData()]);
+    window.CSRetail?.init();
+    lastForegroundRefresh=Date.now();
+    // Show cached analytics immediately; refresh stale connectors in a controlled queue.
+    setTimeout(()=>{if(currentUser)refreshStaleSources().catch(e=>showAlert(e.message,'error'))},1200);
+    checkVersion();
+  }
   async function initAuth(){try{const r=await apiFetch('/api/auth/session');const d=await r.json().catch(()=>({}));if(r.ok&&d.authenticated)return showApp(d.user);showAuth();}catch(e){showAuth(`Не удалось связаться с сервером: ${e.message||'ошибка сети'}`)}}
   async function login(e){e.preventDefault();const btn=document.getElementById('loginBtn'),err=document.getElementById('authError');err.hidden=true;btn.disabled=true;btn.textContent='Проверяю…';try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',cache:'no-store',body:JSON.stringify({username:document.getElementById('loginInput').value.trim(),password:document.getElementById('passwordInput').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Ошибка входа ${r.status}`);await showApp(d.user||'admin');}catch(ex){err.textContent=ex.message||'Не удалось войти';err.hidden=false;}finally{btn.disabled=false;btn.textContent='Войти';}}
   async function logout(){try{await apiFetch('/api/auth/logout',{method:'POST'})}catch{}showAuth();}
 
-  async function fetchStatus(){try{const r=await apiFetch('/api/status');if(!r.ok)throw new Error();apiStatus=await r.json();renderIntegrations();renderHealth();}catch{showAlert('Не удалось проверить состояние интеграций.','error')}}
-  async function loadData(){try{const r=await apiFetch('/api/dashboard');if(!r.ok)throw new Error();state={...blank(),...(await r.json())};await loadRangeData(true);renderAll();}catch{showAlert('Не удалось загрузить аналитические данные.','error');renderAll();}}
+  async function fetchStatus(){try{apiStatus=await fetchJson('/api/status');renderIntegrations();renderHealth();return true;}
+    catch(e){showAlert(`Не удалось проверить интеграции: ${e.message}`,'error');return false;}}
+
+  async function loadData(){try{
+      const data=await fetchJson('/api/dashboard');
+      state={...blank(),...data};await loadRangeData(true);renderAll();
+      window.CSRetail?.load(selectedRange.from,selectedRange.to,state.sources,state.utm);
+      return true;
+    }catch(e){showAlert(`Не удалось загрузить аналитику: ${e.message}`,'error');renderAll();return false;}}
+
   async function loadRangeData(silent=false){
     try{
       const r=await apiFetch(`/api/range?from=${encodeURIComponent(selectedRange.from)}&to=${encodeURIComponent(selectedRange.to)}`);
@@ -97,11 +170,15 @@
     const label=document.getElementById('activeRangeLabel');if(label)label.textContent=rangeLabel();
     const rlabel=document.getElementById('reportRangeLabel');if(rlabel)rlabel.textContent=rangeLabel();
     showAlert('Обновляю аналитику для выбранного периода…');
-    await loadRangeData(false);renderAll();
+    await loadRangeData(false);renderAll();window.CSRetail?.load(selectedRange.from,selectedRange.to,state.sources,state.utm);
   }
   function setPreset(days){const to=new Date();to.setHours(12,0,0,0);const from=new Date(to);from.setDate(from.getDate()-(days-1));document.getElementById('dateFrom').value=iso(from);document.getElementById('dateTo').value=iso(to);applyDateRange(iso(from),iso(to));}
-  async function syncOne(source){showAlert(`Синхронизация: ${source}…`);try{const r=await apiFetch(`/api/sync/${source}`,{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Ошибка синхронизации');showAlert(d.message||'Источник обновлён','success');await Promise.all([loadData(),fetchStatus()]);}catch(e){showAlert(e.message||'Синхронизация не выполнена','error')}}
-  async function syncAll(){showAlert('Обновляю все источники, включая Google Search Console, VK, Telegram, MAX и Дзен…');try{const r=await apiFetch('/api/sync/all',{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Ошибка общей синхронизации');showAlert(d.message||'Данные обновлены','success');await Promise.all([loadData(),fetchStatus()]);}catch(e){showAlert(e.message||'Синхронизация не выполнена','error')}}
+  async function syncOne(source){await runSyncQueue([source],false);}
+  async function syncAll(){
+    const sources=Object.keys(AUTO_FRESH_HOURS).filter(id=>apiStatus.integrations?.[id]?.configured);
+    if(!sources.length){showAlert('Нет источников, доступных для синхронизации. Проверьте Cloudflare Secrets.','error');return;}
+    await runSyncQueue(sources,false);
+  }
 
   function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
   function chart(id,type,data,options={}){const c=document.getElementById(id);if(!c||!window.Chart)return;destroyChart(id);charts[id]=new Chart(c,{type,data,options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{enabled:true}},scales:type==='doughnut'?{}:{x:{grid:{display:false},ticks:{color:'#8a94a6',maxRotation:0}},y:{beginAtZero:true,grid:{color:'#edf0f4'},ticks:{color:'#8a94a6'}}},...options}});}
@@ -560,14 +637,14 @@
   const integrations=[
     ['metrika','Яндекс Метрика','Сайт: посещаемость, поведение, цели, UTM, поисковые фразы'],['webmaster','Яндекс Вебмастер','SEO Яндекса: запросы, позиции, индексация, диагностика'],['searchconsole','Google Search Console','SEO Google: клики, показы, CTR, позиции, запросы, страницы и устройства'],['ybusiness','Яндекс Бизнес / Карты','Автоматический счётчик профиля в Метрике: визиты, пользователи, звонки, маршруты и другие системные действия'],['direct','Яндекс Директ','Кампании, расходы, клики, конверсии, поведение после клика'],['vkads','VK Реклама (ads.vk.com)','Рекламный контур: кампании, расходы и статистика; access token обновляется автоматически'],['vksocial','VK — публичный контент','При каждом обновлении приложение проверяет https://vk.ru/centr_santechniki; API сообщества используется только как дополнительный источник'],['telegram','Telegram — публичный контент','При каждом обновлении проверяется https://t.me/CS_trade_official и сохраняются названия постов и доступные просмотры'],['maxsocial','MAX — публичный контент','При каждом обновлении проверяется https://max.ru/id7724208038_biz; Bot API используется дополнительно, если настроен'],['dzen','Дзен — публичный контент','При каждом обновлении проверяется https://dzen.ru/centr_santehniki и сохраняются доступные метрики публикаций'],['unisender','UniSender','Рассылки, доставляемость, открытия, клики и ссылки']
   ];
-  function renderIntegrations(){const grid=document.getElementById('integrationGrid');if(!grid)return;grid.innerHTML=integrations.map(([id,name,desc])=>{const s=apiStatus.integrations?.[id]||{},ok=Boolean(s.configured??s.connected),cls=!ok?'warn':s.status==='error'?'bad':s.status==='partial'||s.status==='pending'?'warn':'good',label=!ok?'Нужны доступы':s.status?statusLabel(s.status):'Доступы есть';return `<article class="integration-card"><div class="integration-title"><strong>${name}</strong>${pill(label,cls)}</div><p>${esc(desc)}</p><div class="integration-meta">${s.lastSync?`Последняя синхронизация: ${esc(dateTimeRu(s.lastSync))}`:'Синхронизация ещё не выполнялась'}${s.message?`<br>${esc(s.message)}`:''}${s.missing?.length?`<br>Не хватает: ${s.missing.map(esc).join(', ')}`:''}</div><button class="secondary-btn sync-one" data-source="${id}" ${ok?'':'disabled'}>Синхронизировать</button></article>`}).join('');grid.querySelectorAll('.sync-one').forEach(b=>b.addEventListener('click',()=>syncOne(b.dataset.source)));
+  function renderIntegrations(){const grid=document.getElementById('integrationGrid');if(!grid)return;grid.innerHTML=integrations.map(([id,name,desc])=>{const s=apiStatus.integrations?.[id]||{},ok=Boolean(s.configured??s.connected),cls=!ok?'warn':s.status==='error'?'bad':s.status==='partial'||s.status==='pending'?'warn':'good',label=!ok?'Нужны доступы':s.status?statusLabel(s.status):s.mode==='public-web'?'Публичная страница':'Не проверено';return `<article class="integration-card"><div class="integration-title"><strong>${name}</strong>${pill(label,cls)}</div><p>${esc(desc)}</p><div class="integration-meta">${s.lastSync?`Последняя синхронизация: ${esc(dateTimeRu(s.lastSync))}`:'Синхронизация ещё не выполнялась'}${s.message?`<br>${esc(s.message)}`:''}${s.missing?.length?`<br>Не хватает: ${s.missing.map(esc).join(', ')}`:''}</div><button class="secondary-btn sync-one" data-source="${id}" ${ok?'':'disabled'}>Синхронизировать</button></article>`}).join('');grid.querySelectorAll('.sync-one').forEach(b=>b.addEventListener('click',()=>syncOne(b.dataset.source)));
     const required=[['ADMIN_PASSWORD','Secret','авторизация'],['ADMIN_USERNAME','Text','логин'],['SESSION_SECRET','Secret','сессия'],['SITE_URL','Text','поиск счётчика/хоста'],['YANDEX_TOKEN','Secret','Метрика + Вебмастер + Директ'],['UNISENDER_API_KEY','Secret','UniSender'],['VK_ADS_CLIENT_ID','Text','VK Реклама OAuth'],['VK_ADS_CLIENT_SECRET','Secret','VK Реклама OAuth']];
     const optional=[['GOOGLE_SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON','Secret','рекомендуемый вариант: весь JSON сервисного аккаунта Search Console одной переменной'],['GOOGLE_SEARCH_CONSOLE_EMAIL','Text','альтернатива JSON: client_email сервисного аккаунта'],['GOOGLE_SEARCH_CONSOLE_PRIVATE_KEY','Secret','альтернатива JSON: private_key сервисного аккаунта'],['GOOGLE_SEARCH_CONSOLE_PROPERTY','Text','опционально: sc-domain:cs-trade.ru или точный URL-prefix ресурса'],['VK_COMMUNITY_TOKEN','Secret','опционально: расширенная статистика VK-сообщества'],['TELEGRAM_CHANNEL_URL','Text','опционально: другой публичный Telegram URL'],['MAX_BOT_TOKEN','Secret','опционально: расширение MAX через Bot API'],['MAX_CHANNEL_ID','Text','опционально: ID канала MAX для Bot API'],['VK_SERVICE_TOKEN','Secret','read-токен VK для wall.get; основной вариант для автоматической загрузки постов'],['VK_CLIENT_TOKEN','Secret','альтернативное имя read-токена VK; приложение поддерживает его наравне с VK_SERVICE_TOKEN'],['VK_APP_ID','Text','опционально: ID приложения VK; вместе с VK_APP_SECRET позволяет получать серверный токен автоматически'],['VK_APP_SECRET','Secret','опционально: защищённый ключ приложения VK'],['VK_USER_TOKEN','Secret','опционально: пользовательский read-token для постов VK'],['VK_COMMUNITY_URL','Text','опционально: публичная страница VK для резервного чтения постов'],['VK_GROUP_ID','Text','опционально: ID сообщества, если автоопределение не сработало']];
     const all=[...required,...optional];document.getElementById('credentialChecklist').innerHTML=all.map(([k,t,use])=>`<tr><td><code>${k}</code></td><td>${t}</td><td>${apiStatus.runtime?.[k]?pill('Есть','good'):pill(optional.some(x=>x[0]===k)?'Опционально':'Нет',optional.some(x=>x[0]===k)?'info':'bad')}</td><td>${esc(use)}</td></tr>`).join('');const missing=required.filter(([k])=>!apiStatus.runtime?.[k]).map(x=>x[0]);document.getElementById('runtimeSummary').innerHTML=missing.length?`Не хватает обязательных параметров: <strong>${missing.map(esc).join(', ')}</strong>`:'<strong>Все обязательные параметры текущей конфигурации присутствуют.</strong>';
     document.getElementById('syncLogTable').innerHTML=(state.syncLog||[]).length?(state.syncLog||[]).map(x=>`<tr><td>${esc(x.source)}</td><td>${esc(dateTimeRu(x.lastSync))}</td><td>${pill(statusLabel(x.status),x.status==='ok'?'good':x.status==='error'?'bad':'warn')}</td><td>${esc(x.message||'')}</td></tr>`).join(''):'<tr><td colspan="4" class="empty-cell">Журнал пока пуст.</td></tr>';renderHealth();}
 
   function renderAll(){renderOverview();renderPerformance();renderSite();renderBusiness();renderSeo();renderAds();renderSocial();renderEmail();renderTasks();renderReports();renderIntegrations();}
-  function navigate(view){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const copy={overview:['Обзор','Состояние сайта, обращения и то, как люди вас находят.'],performance:['Эффективность','Пьедестал каналов: где больше результата, качества и отдачи от усилий и бюджета.'],site:['Сайт','Полная Метрика: поведение, источники, страницы, цели, UTM и поисковые фразы.'],business:['Яндекс Карты','Профиль компании: посещаемость, целевые действия, маршруты и запросы из Яндекс Бизнеса.'],seo:['SEO','Яндекс Вебмастер + Google Search Console: запросы, позиции, CTR, индексация и план изменений.'],ads:['Реклама','Яндекс Директ и VK Реклама: деньги, качество трафика и результат.'],social:['Соцсети','VK, Telegram, MAX и Дзен: публикации, просмотры, темы, форматы и рекомендации по каждому посту.'],email:['Email','UniSender: доставляемость, открытия, клики, ссылки и качество рассылок.'],tasks:['Рабочее пространство','Канбан, чек-листы, заметки и рекомендации, связанные с реальной аналитикой.'],reports:['Отчёты','Сводный PDF, комментарий по данным и выгрузки для дальнейшего анализа.'],integrations:['Интеграции','Состояние API, runtime-параметры и журнал синхронизаций.']}[view];document.getElementById('pageTitle').textContent=copy[0];document.getElementById('pageSubtitle').textContent=copy[1];document.getElementById('sidebar').classList.remove('open');}
+  function navigate(view){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const copy={overview:['Обзор','Состояние сайта, обращения и то, как люди вас находят.'],performance:['Эффективность','Пьедестал каналов: где больше результата, качества и отдачи от усилий и бюджета.'],site:['Сайт','Полная Метрика: поведение, источники, страницы, цели, UTM и поисковые фразы.'],retail:['Розница','ВсеИнструменты: продажи, возвраты, ассортимент и импорт Excel-отчётов.'],business:['Яндекс Карты','Профиль компании: посещаемость, целевые действия, маршруты и запросы из Яндекс Бизнеса.'],seo:['SEO','Яндекс Вебмастер + Google Search Console: запросы, позиции, CTR, индексация и план изменений.'],ads:['Реклама','Яндекс Директ и VK Реклама: деньги, качество трафика и результат.'],social:['Соцсети','VK, Telegram, MAX и Дзен: публикации, просмотры, темы, форматы и рекомендации по каждому посту.'],email:['Email','UniSender: доставляемость, открытия, клики, ссылки и качество рассылок.'],tasks:['Рабочее пространство','Канбан, чек-листы, заметки и рекомендации, связанные с реальной аналитикой.'],reports:['Отчёты','Сводный PDF, комментарий по данным и выгрузки для дальнейшего анализа.'],integrations:['Интеграции','Состояние API, runtime-параметры и журнал синхронизаций.']}[view];document.getElementById('pageTitle').textContent=copy[0];document.getElementById('pageSubtitle').textContent=copy[1];document.getElementById('sidebar').classList.remove('open');}
   function shortUrl(v){try{const u=new URL(v);return u.pathname==='/'?u.hostname:`${u.hostname}${u.pathname}`;}catch{return truncate(v,58)}}
   function truncate(s,n){const x=String(s||'');return x.length>n?`${x.slice(0,n-1)}…`:x;}
   function hash(s){let h=2166136261;for(const c of String(s)){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return (h>>>0).toString(36);}
@@ -619,5 +696,12 @@
     document.querySelectorAll('[data-range-preset]').forEach(b=>b.addEventListener('click',()=>setPreset(num(b.dataset.rangePreset))));
   }
   initDateRangeControls();
+  document.addEventListener('visibilitychange',async()=>{
+    if(document.visibilityState!=='visible'||!currentUser||syncBusy||Date.now()-lastForegroundRefresh<10*60000)return;
+    lastForegroundRefresh=Date.now();
+    await Promise.all([fetchStatus(),loadData()]);
+    refreshStaleSources().catch(e=>showAlert(e.message,'error'));
+    checkVersion();
+  });
   initAuth();
 })();

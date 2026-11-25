@@ -10,7 +10,7 @@
 <link href="/icon-192.png" rel="apple-touch-icon"/>
 <link href="/manifest.webmanifest" rel="manifest"/>
 <link href="https://cdn.jsdelivr.net" rel="preconnect"/>
-<link href="/styles.css?v=2.8.1" rel="stylesheet"/>
+<link href="/styles.css?v=2.9.0" rel="stylesheet"/>
 </head>
 <body>
 <section aria-labelledby="authTitle" class="auth-screen" id="authScreen">
@@ -33,6 +33,7 @@
 <button class="nav-item active" data-view="overview"><span class="nav-glyph">⌂</span><span>Обзор</span></button>
 <button class="nav-item" data-view="performance"><span class="nav-glyph">♛</span><span>Эффективность</span></button>
 <button class="nav-item" data-view="site"><span class="nav-glyph">◌</span><span>Сайт</span></button>
+<button class="nav-item" data-view="retail"><span class="nav-glyph">▤</span><span>Розница</span></button>
 <button class="nav-item" data-view="business"><span class="nav-glyph">⌖</span><span>Яндекс Карты</span></button>
 <button class="nav-item" data-view="seo"><span class="nav-glyph">↗</span><span>SEO</span></button>
 
@@ -43,7 +44,7 @@
 <button class="nav-item" data-view="reports"><span class="nav-glyph">⇩</span><span>Отчёты</span></button>
 <button class="nav-item" data-view="integrations"><span class="nav-glyph">⚙</span><span>Интеграции</span></button>
 </nav>
-<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.8.1 · рабочий центр</div>
+<div class="sidebar-bottom"><div class="app-version">CS Marketing v2.9.0 · рабочий центр</div>
 <div class="sync-pill"><span class="dot" id="syncDot"></span><span id="syncText">Проверяю источники…</span></div>
 <div class="account-row"><span class="account-avatar">A</span><div><strong id="accountName">admin</strong><span>доступ к кабинету</span></div></div>
 <button class="ghost-btn full logout-btn" id="logoutBtn">Выйти</button>
@@ -116,6 +117,45 @@
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Поисковые фразы Метрики</div><h3>Что вводят перед переходом</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Фраза</th><th>Поисковик</th><th>Визиты</th><th>Отказы</th><th>Время</th></tr></thead><tbody id="searchPhrasesTable"></tbody></table></div></article>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">UTM</div><h3>Кампании и собственные каналы</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник / тип</th><th>Кампания</th><th>Визиты</th><th>Отказы</th><th>Цели</th><th>CR</th></tr></thead><tbody id="utmTable"></tbody></table></div></article>
 </div>
+</section>
+<section class="view" id="retail">
+  <div class="retail-intro">
+    <div><div class="eyebrow">Розничный канал · ВсеИнструменты</div><h2>Продажи и экономика маркетплейса</h2>
+      <p class="muted">Аналитика по фактически загруженным Excel-отчётам. Период выбирается в общей панели сверху. Загрузки хранятся в D1.</p></div>
+    <a class="secondary-btn retail-external" href="https://www.cs-trade.ru/retail/" target="_blank" rel="noopener noreferrer">Раздел «Розница» на сайте ↗</a>
+  </div>
+  <article class="panel retail-catalog-panel">
+    <div class="panel-head"><div><div class="eyebrow">Ассортимент на сайте компании</div><h3>Продукция ЦС на ВсеИнструменты</h3><p class="muted">Справочная информация из раздела <a href="https://www.cs-trade.ru/retail/" target="_blank" rel="noopener noreferrer">cs-trade.ru/retail/</a>. Числа отражают опубликованный ассортимент и не синхронизируются с кабинетом маркетплейса.</p></div></div>
+    <div class="retail-catalog-grid"><div><strong>135</strong><span>Смесители</span></div><div><strong>31</strong><span>Душевые решения</span></div><div><strong>448</strong><span>Гибкая подводка</span></div><div><strong>500+</strong><span>Комплектующие</span></div><div><strong>700+</strong><span>Товаров на странице бренда</span></div></div>
+  </article>
+  <div class="metric-grid" id="retailMetrics"></div>
+  <div class="two-col wide-left">
+    <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Продажи</div><h3>Выручка и возвраты по дням</h3></div></div><div class="chart-wrap"><canvas id="retailSalesChart"></canvas></div></article>
+    <article class="panel"><div class="panel-head"><div><div class="eyebrow">Качество данных</div><h3>На основе чего рассчитано</h3></div></div><div id="retailDataQuality" class="retail-quality muted">Загрузка отчётов ещё не выполнялась.</div><div class="retail-site-signal" id="retailSiteSignal"></div></article>
+  </div>
+  <article class="panel"><div class="panel-head"><div><div class="eyebrow">Ассортимент</div><h3>Лидеры продаж по чистой выручке</h3></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Товар</th><th>Артикул</th><th>Количество, шт.</th><th>Выручка за вычетом возвратов</th><th>Строк</th></tr></thead><tbody id="retailProductsTable"><tr><td colspan="5" class="empty-cell">Нет загруженных продаж.</td></tr></tbody></table></div>
+  </article>
+  <article class="panel retail-upload-panel">
+    <div class="panel-head"><div><div class="eyebrow">Загрузка отчётов</div><h3>Импорт Excel по продажам</h3><p class="muted">Поддерживаются .xlsx. Сначала выберите лист и сверьте названия колонок. Файл целиком остаётся в браузере, на сервер отправляются только выбранные строки продаж.</p></div></div>
+    <div class="retail-import-controls">
+      <label class="retail-file-label">Отчёт о продажах (.xlsx)<input type="file" id="retailFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/></label>
+      <label>Лист Excel<select class="select" id="retailSheetSelect" disabled><option value="">Выберите файл</option></select></label>
+      <label>Строка заголовков<select class="select" id="retailHeaderRow" disabled><option value="">Выберите файл</option></select></label>
+    </div>
+    <div id="retailUploadState" class="retail-upload-state muted">Выберите файл. Данные появятся в предварительном просмотре перед загрузкой.</div>
+    <div id="retailMappingPanel" hidden>
+      <h4>Сопоставление столбцов</h4><p class="muted retail-small">Дата и сумма продажи обязательны. Если готовой суммы нет, можно сопоставить цену за единицу и количество. Прочие показатели заполняются только при наличии соответствующих столбцов.</p>
+      <div class="retail-mapping-grid" id="retailMappingFields"></div>
+      <h4>Предпросмотр строк</h4><div class="table-scroll"><table><thead><tr><th>Дата</th><th>Артикул / товар</th><th>Кол-во</th><th>Сумма, ₽</th></tr></thead><tbody id="retailPreviewTable"></tbody></table></div>
+      <p id="retailPreviewNote" class="muted retail-small"></p>
+      <div class="button-row"><button class="primary-btn" type="button" id="retailImportBtn">Импортировать продажи</button></div>
+    </div>
+  </article>
+  <article class="panel"><div class="panel-head"><div><div class="eyebrow">История</div><h3>Загруженные файлы</h3><button class="secondary-btn" id="retailReloadBtn" type="button">Обновить список</button></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Имя файла</th><th>Период</th><th>Строк</th><th>Дата импорта</th><th>Действие</th></tr></thead><tbody id="retailImportsTable"><tr><td colspan="5" class="empty-cell">Файлов пока нет.</td></tr></tbody></table></div>
+    <p class="muted retail-small">Два разных файла с пересекающимися периодами могут содержать одни и те же продажи. Перед повторным импортом проверьте пересечения, чтобы не удвоить выручку.</p>
+  </article>
 </section>
 <section class="view" id="business">
 <div class="section-toolbar profile-binding-bar">
@@ -248,7 +288,7 @@
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Комментарий для руководителя</div><h3>Готовый текст по цифрам</h3></div></div><div class="manager-comment" id="managerComment"></div></article>
 </section>
 <section class="view" id="integrations">
-<article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Метрика, Вебмастер, Google Search Console, Директ, VK Реклама, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. Все рабочие данные и заметки хранятся на сервере.</p></div><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></article>
+<article class="panel integration-header"><div><div class="eyebrow">Источники</div><h3>Состояние интеграций</h3><p class="muted">Метрика, Вебмастер, Google Search Console, Директ, VK Реклама, UniSender и публичный мониторинг VK, Telegram, MAX и Дзена. Все рабочие данные и заметки хранятся на сервере.</p></div><div class="retail-sync-toolbar"><span id="syncProgress" class="muted">Источники обновляются автоматически при открытии, если данные устарели.</span><button class="primary-btn" id="syncAllBtn">Синхронизировать всё</button></div></article>
 <div class="integration-grid" id="integrationGrid"></div>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Параметры Cloudflare</div><h3>Проверка конфигурации</h3></div></div><div class="runtime-summary" id="runtimeSummary"></div><div class="table-scroll"><table><thead><tr><th>Параметр</th><th>Тип</th><th>Статус</th><th>Используется для</th></tr></thead><tbody id="credentialChecklist"></tbody></table></div></article>
 <article class="panel"><div class="panel-head"><div><div class="eyebrow">Журнал</div><h3>Последние синхронизации</h3></div></div><div class="table-scroll compact-table"><table><thead><tr><th>Источник</th><th>Когда</th><th>Статус</th><th>Комментарий</th></tr></thead><tbody id="syncLogTable"></tbody></table></div></article>
@@ -262,6 +302,8 @@
 <div class="report-canvas" id="reportCanvas"></div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
-<script src="/app.js?v=2.8.1"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="/retail.js?v=2.9.0"></script>
+<script src="/app.js?v=2.9.0"></script>
 </body>
 </html>

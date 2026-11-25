@@ -1,4 +1,5 @@
-// CS Marketing by skayfall v2.8 — Yandex Webmaster restored + funnel-weighted channel effectiveness
+// CS Marketing by skayfall v2.9.0 — reliable refresh and retail Excel analytics
+const APP_VERSION = "2.9.0";
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;
@@ -15,7 +16,14 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/')) return await handleApi(request, env, ctx, url);
-      return env.ASSETS.fetch(request);
+      const asset = await env.ASSETS.fetch(request);
+      // Application shell and scripts must not stick in the browser cache after a deploy.
+      if (['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest'].includes(url.pathname)) {
+        const headers = new Headers(asset.headers);
+        headers.set('cache-control', 'no-store, max-age=0, must-revalidate');
+        return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+      }
+      return asset;
     } catch (err) {
       return json({ error: err?.message || 'Internal error' }, 500);
     }
@@ -27,6 +35,7 @@ export default {
 
 async function handleApi(request, env, ctx, url) {
   if (request.method === 'POST' && url.pathname === '/api/auth/login') return login(request, env, url);
+  if (request.method === 'GET' && url.pathname === '/api/version') return json({ version: APP_VERSION });
   if (request.method === 'GET' && url.pathname === '/api/auth/session') return sessionStatus(request, env);
   if (request.method === 'POST' && url.pathname === '/api/auth/logout') return logout(url);
 
@@ -36,6 +45,11 @@ async function handleApi(request, env, ctx, url) {
   await ensureExtendedSchema(env);
 
   if (request.method === 'GET' && url.pathname === '/api/status') return status(env);
+  if (request.method === 'GET' && url.pathname === '/api/retail') return retailAnalytics(url, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/import/start') return retailImportStart(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/import/chunk') return retailImportChunk(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/retail/import/finish') return retailImportFinish(request, env);
+  if (request.method === 'DELETE' && /^\/api\/retail\/import\/[0-9a-f-]{36}$/.test(url.pathname)) return retailImportDelete(url, env);
   if (request.method === 'GET' && url.pathname === '/api/dashboard') return dashboard(env);
   if (request.method === 'GET' && url.pathname === '/api/range') return rangeAnalytics(url, env);
   if (request.method === 'GET' && url.pathname === '/api/workspace') return workspaceData(env);
@@ -50,7 +64,8 @@ async function handleApi(request, env, ctx, url) {
   if (request.method === 'POST' && m) {
     try {
       const result = await syncSource(m[1], env);
-      return json(result, 200);
+      const record = await env.DB.prepare('SELECT status,message FROM sync_log WHERE source=?').bind(m[1]).first().catch(() => null);
+      return json({ ...result, syncStatus: record?.status || 'ok', syncMessage: record?.message || result?.message || null }, 200);
     } catch (err) {
       await logSync(env, m[1], 'error', err?.message || 'Ошибка синхронизации').catch(() => {});
       return json({ error: err?.message || 'Ошибка синхронизации' }, 500);
@@ -190,7 +205,11 @@ async function ensureExtendedSchema(env) {
       `CREATE TABLE IF NOT EXISTS yandex_business_queries (query TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', visits REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(query,service))`,
       `CREATE TABLE IF NOT EXISTS workspace_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT, status TEXT, title TEXT NOT NULL, body TEXT, priority TEXT DEFAULT 'medium', due_date TEXT, checked INTEGER DEFAULT 0, pinned INTEGER DEFAULT 0, sort_order INTEGER DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS integration_cache (cache_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, expires_at INTEGER DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-      `CREATE TABLE IF NOT EXISTS app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
+      `CREATE TABLE IF NOT EXISTS app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS retail_imports (id TEXT PRIMARY KEY, file_hash TEXT NOT NULL UNIQUE, filename TEXT NOT NULL, sheet TEXT, declared_rows INTEGER NOT NULL, row_count INTEGER DEFAULT 0, date_from TEXT, date_to TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS retail_sales (import_id TEXT NOT NULL, row_index INTEGER NOT NULL, sale_date TEXT NOT NULL, sku TEXT, product_name TEXT NOT NULL, order_id TEXT, quantity REAL DEFAULT 0, revenue REAL DEFAULT 0, commission REAL DEFAULT 0, logistics REAL DEFAULT 0, cost REAL DEFAULT 0, operation TEXT, PRIMARY KEY(import_id,row_index), FOREIGN KEY(import_id) REFERENCES retail_imports(id))`,
+      `CREATE INDEX IF NOT EXISTS idx_retail_sales_date ON retail_sales(sale_date)`,
+      `CREATE INDEX IF NOT EXISTS idx_retail_sales_sku ON retail_sales(sku)`
     ];
     for (const sql of creates) await env.DB.prepare(sql).run();
     const alters = [
@@ -595,8 +614,25 @@ async function syncConfigured(env) {
   add('maxsocial', () => syncMax(env));
   add('dzen', () => syncDzen(env));
   if (env.UNISENDER_API_KEY) add('unisender', () => syncUnisender(env));
-  const settled = await Promise.allSettled(jobs.map(([, fn]) => fn()));
-  const results = settled.map((r, i) => ({ source: jobs[i][0], ok: r.status === 'fulfilled', message: r.status === 'fulfilled' ? (r.value?.message || 'Обновлено') : (r.reason?.message || String(r.reason || 'Ошибка')) }));
+  // Limit external API concurrency to prevent rate limiting and long subrequest bursts.
+  const results = Array(jobs.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, async () => {
+    while (cursor < jobs.length) {
+      const i = cursor++;
+      const [source, fn] = jobs[i];
+      try {
+        const value = await fn();
+        const record = await env.DB.prepare('SELECT status,message FROM sync_log WHERE source=?').bind(source).first().catch(() => null);
+        const syncStatus = record?.status || 'ok';
+        results[i] = { source, ok: syncStatus === 'ok', status: syncStatus, message: record?.message || value?.message || 'Обновлено' };
+      } catch (err) {
+        const message = String(err?.message || err || 'Ошибка').slice(0, 700);
+        await logSync(env, source, 'error', message).catch(() => {});
+        results[i] = { source, ok: false, message };
+      }
+    }
+  }));
   const ok = results.filter(x => x.ok).length;
   const failed = results.length - ok;
   return { message: `Синхронизация завершена: ${ok} источников обновлено${failed ? `, ${failed} с ошибкой/ограничением` : ''}.`, results };
@@ -2046,6 +2082,106 @@ async function importRows(request, env) {
   return json({ ok:true, imported:list.length });
 }
 
+/* -------------------- RETAIL: VSEINSTRUMENTI SALES FILES -------------------- */
+
+function retailIsoDate(value) {
+  const raw = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(Date.parse(raw + 'T12:00:00Z')))
+    throw new Error('У строки отсутствует корректная дата продажи в формате ГГГГ-ММ-ДД');
+  return raw;
+}
+function retailMetric(value, name) {
+  const x = Number(value ?? 0);
+  if (!Number.isFinite(x) || Math.abs(x) > 1e12) throw new Error('Некорректное числовое поле: ' + name);
+  return x;
+}
+async function retailImportStart(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const hash = String(b.hash || '').toLowerCase();
+  const filename = String(b.filename || '').trim().slice(0, 240);
+  const sheet = String(b.sheet || '').slice(0, 120);
+  const rows = Number(b.rows || 0);
+  if (!/^[a-f0-9]{64}$/.test(hash) || !filename || !Number.isInteger(rows) || rows < 1 || rows > 40000)
+    return json({ error: 'Неверные метаданные Excel. Допустимо от 1 до 40 000 строк.' }, 400);
+  const existing = await env.DB.prepare('SELECT id,filename,status FROM retail_imports WHERE file_hash=?').bind(hash).first();
+  if (existing) return json({ error: `Этот файл уже импортирован или загружался: ${existing.filename} (${existing.status}). Удалите прежний импорт, если хотите повторить.`, importId: existing.id }, 409);
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO retail_imports(id,file_hash,filename,sheet,declared_rows) VALUES(?,?,?,?,?)')
+    .bind(id,hash,filename,sheet,rows).run();
+  return json({ ok: true, importId: id });
+}
+async function retailImportChunk(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const id = String(b.importId || '');
+  const file = await env.DB.prepare('SELECT id,status,declared_rows FROM retail_imports WHERE id=?').bind(id).first();
+  if (!file || file.status !== 'pending') return json({ error: 'Импорт не найден или уже завершён.' }, 404);
+  const rows = b.rows;
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return json({ error: 'Передайте от 1 до 100 строк за запрос.' }, 400);
+  let stmts;
+  try {
+    stmts = rows.map(x => {
+      const i = Number(x.index);
+      if (!Number.isInteger(i) || i < 0 || i >= file.declared_rows) throw new Error('Неверный номер строки');
+      const date = retailIsoDate(x.date);
+      const title = String(x.product || '').trim().slice(0, 260) || 'Товар без наименования';
+      const sku = String(x.sku || '').slice(0, 100);
+      const order = String(x.orderId || '').slice(0, 120);
+      const operation = String(x.operation || '').slice(0, 120);
+      return env.DB.prepare(`INSERT INTO retail_sales(import_id,row_index,sale_date,sku,product_name,order_id,quantity,revenue,commission,logistics,cost,operation) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(import_id,row_index) DO UPDATE SET sale_date=excluded.sale_date,sku=excluded.sku,product_name=excluded.product_name,order_id=excluded.order_id,quantity=excluded.quantity,revenue=excluded.revenue,commission=excluded.commission,logistics=excluded.logistics,cost=excluded.cost,operation=excluded.operation`)
+        .bind(id,i,date,sku,title,order,retailMetric(x.quantity,'Количество'),retailMetric(x.revenue,'Выручка'),Math.abs(retailMetric(x.commission,'Комиссия')),Math.abs(retailMetric(x.logistics,'Логистика')),Math.abs(retailMetric(x.cost,'Себестоимость')),operation);
+    });
+  } catch (e) { return json({ error: `Проверка строк Excel: ${e.message}` }, 400); }
+  await env.DB.batch(stmts);
+  return json({ ok: true, processed: rows.length });
+}
+async function retailImportFinish(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const id = String(b.importId || '');
+  const file = await env.DB.prepare('SELECT * FROM retail_imports WHERE id=?').bind(id).first();
+  if (!file || file.status !== 'pending') return json({ error: 'Ожидающий импорт не найден.' }, 404);
+  const summary = await env.DB.prepare('SELECT COUNT(*) AS cnt, MIN(sale_date) AS from_date, MAX(sale_date) AS to_date FROM retail_sales WHERE import_id=?').bind(id).first();
+  if (Number(summary.cnt) !== Number(file.declared_rows)) return json({ error: `Передано ${summary.cnt} из ${file.declared_rows} строк. Импорт не опубликован.` }, 409);
+  await env.DB.prepare("UPDATE retail_imports SET row_count=?,date_from=?,date_to=?,status='complete',completed_at=CURRENT_TIMESTAMP WHERE id=?")
+    .bind(summary.cnt,summary.from_date,summary.to_date,id).run();
+  return json({ ok: true, imported: Number(summary.cnt), from: summary.from_date, to: summary.to_date });
+}
+async function retailImportDelete(url, env) {
+  const id = url.pathname.split('/').pop();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM retail_sales WHERE import_id=?').bind(id),
+    env.DB.prepare('DELETE FROM retail_imports WHERE id=?').bind(id)
+  ]);
+  return json({ ok: true });
+}
+async function retailAnalytics(url, env) {
+  let from, to;
+  try {
+    from = retailIsoDate(url.searchParams.get('from'));
+    to = retailIsoDate(url.searchParams.get('to'));
+    if (from > to) throw new Error('Начало периода позже конца');
+  } catch (e) { return json({ error: 'Выберите корректный период: ' + e.message }, 400); }
+  const q = (sql, ...params) => env.DB.prepare(sql).bind(...params).all().then(v => v.results || []);
+  const [imports, daily, products, orders, breakdown] = await Promise.all([
+    q("SELECT id,filename,sheet,row_count AS rowCount,date_from AS dateFrom,date_to AS dateTo,created_at AS createdAt,status FROM retail_imports ORDER BY created_at DESC LIMIT 100"),
+    q(`SELECT s.sale_date AS date,COUNT(*) AS rows,SUM(CASE WHEN revenue>0 THEN revenue ELSE 0 END) AS sales,
+      SUM(CASE WHEN revenue<0 THEN -revenue ELSE 0 END) AS refunds,SUM(revenue) AS revenue,
+      SUM(quantity) AS quantity,SUM(commission) AS commission,SUM(logistics) AS logistics,SUM(cost) AS cost
+      FROM retail_sales s INNER JOIN retail_imports i ON i.id=s.import_id
+      WHERE i.status='complete' AND s.sale_date BETWEEN ? AND ? GROUP BY s.sale_date ORDER BY s.sale_date`,from,to),
+    q(`SELECT COALESCE(NULLIF(s.sku,''),s.product_name) AS productKey,MAX(s.product_name) AS product,
+      MAX(s.sku) AS sku,SUM(s.revenue) AS revenue,SUM(s.quantity) AS quantity,COUNT(*) AS rows
+      FROM retail_sales s INNER JOIN retail_imports i ON i.id=s.import_id
+      WHERE i.status='complete' AND s.sale_date BETWEEN ? AND ?
+      GROUP BY COALESCE(NULLIF(s.sku,''),s.product_name) ORDER BY revenue DESC LIMIT 30`,from,to),
+    q(`SELECT COUNT(DISTINCT s.order_id) AS value, COUNT(*) AS withOrderId FROM retail_sales s
+      INNER JOIN retail_imports i ON i.id=s.import_id WHERE i.status='complete' AND s.sale_date BETWEEN ? AND ? AND s.order_id<>''`,from,to),
+    q(`SELECT COUNT(*) AS rows,COUNT(DISTINCT s.import_id) AS imports,MIN(s.sale_date) AS firstDate,MAX(s.sale_date) AS lastDate
+      FROM retail_sales s INNER JOIN retail_imports i ON i.id=s.import_id WHERE i.status='complete' AND s.sale_date BETWEEN ? AND ?`,from,to)
+  ]);
+  return json({ from,to,imports,daily,products,orders:orders[0]||{},coverage:breakdown[0]||{} });
+}
+
 /* -------------------- INTEGRATION RESOLUTION -------------------- */
 
 async function resolveMetrikaCounterId(env, headers) {
@@ -2102,10 +2238,24 @@ function withParams(url, params) {
   return u.toString();
 }
 async function apiGet(url, headers = {}) {
-  const r = await fetch(url, { headers });
-  const text = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${text.slice(0,700)}`);
-  try { return JSON.parse(text); } catch { throw new Error(`API вернул не JSON: ${text.slice(0,300)}`); }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let r;
+    try { r = await fetch(url, { headers, signal: AbortSignal.timeout(22000) }); }
+    catch (e) {
+      if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 600)); continue; }
+      throw new Error(`API ${new URL(url).hostname}: ${e?.message || 'сетевая ошибка / таймаут'}`);
+    }
+    const body = await r.text();
+    if (!r.ok) {
+      if (attempt === 0 && [429, 500, 502, 503, 504].includes(r.status)) {
+        await new Promise(resolve => setTimeout(resolve, r.status === 429 ? 1500 : 600));
+        continue;
+      }
+      throw new Error(`${new URL(url).hostname}: HTTP ${r.status} — ${body.slice(0, 350)}`);
+    }
+    try { return JSON.parse(body); }
+    catch { throw new Error(`API ${new URL(url).hostname} вернул некорректный JSON: ${body.slice(0, 200)}`); }
+  }
 }
 function requiredResult(result, name) { if (result.status === 'rejected') throw new Error(`${name}: ${result.reason?.message || result.reason}`); return result.value; }
 function optionalResult(result) { return result.status === 'fulfilled' ? result.value : { data: [], totals: [] }; }
