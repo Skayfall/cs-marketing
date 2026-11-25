@@ -485,6 +485,19 @@ async function metrikaRangeData(env, from, to) {
   return { counterId, sources, pages, devices:simple('devices'), regions:simple('regions'), searchEngines:simple('searchEngines'), utm, searchPhrases, goals, warnings };
 }
 
+function yandexWeightedPosition(positionSeries, weightSeries) {
+  // Each daily average position is weighted by its actual impressions (or clicks).
+  const weights=new Map((weightSeries||[]).map(row=>[row.date,Number(row.value)]));
+  let numerator=0,denominator=0;
+  for(const item of positionSeries||[]){
+    const position=Number(item.value),weight=weights.get(item.date);
+    if(!Number.isFinite(position)||position<=0||!Number.isFinite(weight)||weight<=0)continue;
+    numerator+=position*weight;
+    denominator+=weight;
+  }
+  return denominator>0 ? numerator/denominator : null;
+}
+
 async function webmasterRangeData(env, from, to) {
   const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
   const user = await apiGet('https://api.webmaster.yandex.net/v4/user', headers);
@@ -500,7 +513,7 @@ async function webmasterRangeData(env, from, to) {
     apiGet(withParams(`${root}/search-queries/popular`,params),headers),
     apiGet(withParams(`${root}/search-queries/popular`,{...params,date_from:dateOnly(prevFrom),date_to:dateOnly(prevTo)}),headers).catch(()=>({queries:[]})),
     // Official aggregate history is independent of the popular-query sample.
-    apiGet(withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS'],date_from:from,date_to:to}),headers).catch(()=>null)
+    apiGet(withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'],date_from:from,date_to:to}),headers).catch(()=>null)
   ]);
   const prevMap=new Map((prev.queries||[]).map(q=>[q.query_text,q]));
   const seo=(cur.queries||[]).map(q=>{const ind=q.indicators||{},shows=num(ind.TOTAL_SHOWS),clicks=num(ind.TOTAL_CLICKS),position=num(ind.AVG_SHOW_POSITION),clickPosition=num(ind.AVG_CLICK_POSITION),prevPos=num(prevMap.get(q.query_text)?.indicators?.AVG_SHOW_POSITION);return {query:q.query_text,shows,clicks,ctr:shows?clicks/shows*100:0,position,clickPosition,delta:prevPos&&position?prevPos-position:0};});
@@ -509,10 +522,14 @@ async function webmasterRangeData(env, from, to) {
     .filter(row=>typeof row?.date==='string'&&row.date.slice(0,10)>=from&&row.date.slice(0,10)<=to)
     .map(row=>({date:row.date.slice(0,10),value:num(row.value)}));
   const showsSeries=seriesFor('TOTAL_SHOWS'),clicksSeries=seriesFor('TOTAL_CLICKS');
+  const positionSeries=seriesFor('AVG_SHOW_POSITION'),clickPositionSeries=seriesFor('AVG_CLICK_POSITION');
   const totals={
     available:showsSeries.length>0||clicksSeries.length>0,
     shows:showsSeries.reduce((sum,row)=>sum+row.value,0),
     clicks:clicksSeries.reduce((sum,row)=>sum+row.value,0),
+    averagePosition:yandexWeightedPosition(positionSeries,showsSeries),
+    averageClickPosition:yandexWeightedPosition(clickPositionSeries,clicksSeries),
+    averagePositionDays:positionSeries.length,averageClickPositionDays:clickPositionSeries.length,
     from,to,showDays:showsSeries.length,clickDays:clicksSeries.length,
     lastDay:showsSeries.at(-1)?.date||clicksSeries.at(-1)?.date||null,
     source:'search-queries/all/history'
@@ -910,7 +927,7 @@ async function webmasterSearchDiagnostics(env) {
   const checks=[
     {name:'popular_30_days',url:withParams(popular,{order_by:'TOTAL_SHOWS',query_indicator:indicators,date_from:from,date_to:to,limit:500})},
     {name:'popular_default_week',url:withParams(popular,{order_by:'TOTAL_SHOWS',query_indicator:indicators,limit:500})},
-    {name:'all_history_30_days',url:withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS'],date_from:from,date_to:to})}
+    {name:'all_history_30_days',url:withParams(`${root}/search-queries/all/history`,{query_indicator:['TOTAL_SHOWS','TOTAL_CLICKS','AVG_SHOW_POSITION','AVG_CLICK_POSITION'],date_from:from,date_to:to})}
   ];
   const results=await Promise.all(checks.map(async ({name,url})=>{
     try{
@@ -921,8 +938,14 @@ async function webmasterSearchDiagnostics(env) {
         sampleIndicatorKeys:Array.isArray(data.queries)&&data.queries[0]?Object.keys(data.queries[0].indicators||{}):[]};
       const indicators=data.indicators||{},shows=Array.isArray(indicators.TOTAL_SHOWS)?indicators.TOTAL_SHOWS:[],
         clicks=Array.isArray(indicators.TOTAL_CLICKS)?indicators.TOTAL_CLICKS:[];
+      const toSeries=arr=>arr.map(x=>({date:String(x.date||'').slice(0,10),value:Number(x.value)}));
+      const positionSeries=Array.isArray(indicators.AVG_SHOW_POSITION)?indicators.AVG_SHOW_POSITION:[];
+      const clickPositionSeries=Array.isArray(indicators.AVG_CLICK_POSITION)?indicators.AVG_CLICK_POSITION:[];
       return {name,ok:true,daysWithShows:shows.length,daysWithClicks:clicks.length,
         impressions:shows.reduce((a,x)=>a+num(x.value),0),clicks:clicks.reduce((a,x)=>a+num(x.value),0),
+        averagePosition:yandexWeightedPosition(toSeries(positionSeries),toSeries(shows)),
+        averageClickPosition:yandexWeightedPosition(toSeries(clickPositionSeries),toSeries(clicks)),
+        positionDays:positionSeries.length,clickPositionDays:clickPositionSeries.length,
         firstDay:shows[0]?.date||null,lastDay:shows[shows.length-1]?.date||null};
     }catch(e){return {name,ok:false,error:String(e?.message||e).slice(0,350)};}
   }));
