@@ -888,7 +888,10 @@ async function syncWebmaster(env) {
   // URL-level search visibility for product/catalog pages. This recreates the useful part of
   // Yandex Products «Видимость в Поиске» without a second token: impressions/clicks/CTR/position
   // come from Webmaster; post-click behaviour is joined with Metrica in the UI.
-  const productUrlAnalytics = await fetchProductUrlAnalytics(root, headers).catch(() => []);
+  // Product URL analytics is an optional extension; do not block core Webmaster synchronization
+  // when the extension has not been implemented in this Worker build.
+  const productUrlsAvailable = typeof fetchProductUrlAnalytics === 'function';
+  const productUrlAnalytics = productUrlsAvailable ? await fetchProductUrlAnalytics(root, headers).catch(() => []) : [];
   await env.DB.prepare(`DELETE FROM product_search_daily WHERE date < date('now','-180 day')`).run().catch(()=>{});
   for (const row of productUrlAnalytics) {
     await env.DB.prepare(`INSERT INTO product_search_daily(url,date,popular_query,impressions,clicks,ctr,position,demand,updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
@@ -928,8 +931,8 @@ async function syncWebmaster(env) {
       .bind(date,num(item.value)).run();
   }
 
-  await logSync(env, 'webmaster', 'ok', `Вебмастер: ${current.queries?.length || 0} запросов, ${productUrlAnalytics.length} дневных строк товарных URL, ${Object.keys(diagnostics.problems || {}).length} диагностик`);
-  return { message: `Вебмастер обновлён: ${current.queries?.length || 0} запросов, ${new Set(productUrlAnalytics.map(x=>x.url)).size} товарных URL, индексация и диагностика загружены.` };
+  await logSync(env, 'webmaster', 'ok', `Вебмастер: ${current.queries?.length || 0} запросов, ${Object.keys(diagnostics.problems || {}).length} диагностик; товарные URL: ${productUrlsAvailable ? productUrlAnalytics.length + ' дневных строк' : 'дополнительная аналитика пока недоступна'}`);
+  return { message: `Вебмастер обновлён: ${current.queries?.length || 0} запросов, индексация и диагностика загружены. ${productUrlsAvailable ? new Set(productUrlAnalytics.map(x=>x.url)).size + ' товарных URL.' : 'Дополнительная статистика товарных URL пока недоступна.'}` };
 }
 
 
