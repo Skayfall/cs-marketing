@@ -740,24 +740,25 @@ async function syncMetrika(env) {
 
   await flushD1(batchdaily);
   const periodKey = dateOnly(new Date());
-  await replaceDimensionTable(env, 'traffic_sources', periodKey, sourceRes.data || [], async (row) => {
+  if ((sourceRes.data || []).length) await replaceDimensionTable(env, 'traffic_sources', periodKey, sourceRes.data || [], async (row) => {
     const m = row.metrics || []; return [dimensionName(row.dimensions?.[0]) || 'Прочее', num(m[0]), num(m[1]), num(m[2]), num(m[3])];
   });
-  await env.DB.prepare('DELETE FROM landing_pages WHERE period_key=?').bind(periodKey).run();
   const batchpages=[];
+  if ((pageRes.data || []).length) batchpages.push(env.DB.prepare('DELETE FROM landing_pages WHERE period_key=?').bind(periodKey));
   for (const row of pageRes.data || []) {
     const page = dimensionName(row.dimensions?.[0]); const m = row.metrics || []; if (!page) continue;
     batchpages.push(env.DB.prepare(`INSERT INTO landing_pages(period_key,page,title,visits,users,bounce,depth,duration,conversions,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       .bind(periodKey,page,page,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])));
   }
 
-  await flushD1(batchpages);  // Частичный сбой одного среза Метрики не должен стирать последний успешный результат из D1.
+  await flushD1(batchpages);
+  // Частичный сбой одного среза Метрики не должен стирать последний успешный результат из D1.
   if ((deviceRes.data || []).length) await replaceSimpleDimension(env, 'device_stats', periodKey, deviceRes.data || []);
   if ((regionRes.data || []).length) await replaceSimpleDimension(env, 'region_stats', periodKey, regionRes.data || []);
   if ((engineRes.data || []).length) await replaceSimpleDimension(env, 'search_engines', periodKey, engineRes.data || []);
 
-  await env.DB.prepare('DELETE FROM utm_stats WHERE period_key=?').bind(periodKey).run();
   const batchutm=[];
+  if ((utmRes.data || []).length) batchutm.push(env.DB.prepare('DELETE FROM utm_stats WHERE period_key=?').bind(periodKey));
   for (const row of utmRes.data || []) {
     const source = dimensionName(row.dimensions?.[0]) || '(не задано)';
     const medium = dimensionName(row.dimensions?.[1]) || '(не задано)';
@@ -769,8 +770,8 @@ async function syncMetrika(env) {
   }
 
   await flushD1(batchutm);
-  await env.DB.prepare('DELETE FROM search_phrases WHERE period_key=?').bind(periodKey).run();
   const batchphrases=[];
+  if ((phraseRes.data || []).length) batchphrases.push(env.DB.prepare('DELETE FROM search_phrases WHERE period_key=?').bind(periodKey));
   for (const row of phraseRes.data || []) {
     const engine = dimensionName(row.dimensions?.[0]) || 'Поиск';
     const phrase = dimensionName(row.dimensions?.[1]) || '';
@@ -782,7 +783,7 @@ async function syncMetrika(env) {
 
   await flushD1(batchphrases);
   const batchGoals=[];
-  await env.DB.prepare('DELETE FROM metrika_goals WHERE period_key=?').bind(periodKey).run();
+  if (classified.length) batchGoals.push(env.DB.prepare('DELETE FROM metrika_goals WHERE period_key=?').bind(periodKey));
   const cutoff30 = new Date(); cutoff30.setHours(0,0,0,0); cutoff30.setDate(cutoff30.getDate()-29);
   const totalVisits = num(sourceRes.totals?.[0]) || (dailyRes.data || []).filter(r => { const d=dimensionName(r.dimensions?.[0]); return d && new Date(`${d}T12:00:00`) >= cutoff30; }).reduce((a,r)=>a+num(r.metrics?.[0]),0);
   for (const chunk of chunks(classified, 20)) {
@@ -859,18 +860,20 @@ async function resolvePrimaryGoals(env, goals) {
 }
 
 async function replaceDimensionTable(env, table, periodKey, rows, mapper) {
-  await env.DB.prepare(`DELETE FROM ${table} WHERE period_key=?`).bind(periodKey).run();
+  const statements=[env.DB.prepare(`DELETE FROM ${table} WHERE period_key=?`).bind(periodKey)];
   for (const row of rows) {
     const x = await mapper(row); if (!x?.[0]) continue;
-    await env.DB.prepare(`INSERT INTO ${table}(period_key,name,visits,users,bounce,conversions) VALUES(?,?,?,?,?,?)`).bind(periodKey,...x).run();
+    statements.push(env.DB.prepare(`INSERT INTO ${table}(period_key,name,visits,users,bounce,conversions) VALUES(?,?,?,?,?,?)`).bind(periodKey,...x));
   }
+  for(const group of chunks(statements,60)) await env.DB.batch(group);
 }
 async function replaceSimpleDimension(env, table, periodKey, rows) {
-  await env.DB.prepare(`DELETE FROM ${table} WHERE period_key=?`).bind(periodKey).run();
+  const statements=[env.DB.prepare(`DELETE FROM ${table} WHERE period_key=?`).bind(periodKey)];
   for (const row of rows) {
     const name = dimensionName(row.dimensions?.[0]); if (!name) continue;
-    await env.DB.prepare(`INSERT INTO ${table}(period_key,name,visits,users) VALUES(?,?,?,?)`).bind(periodKey,name,num(row.metrics?.[0]),num(row.metrics?.[1])).run();
+    statements.push(env.DB.prepare(`INSERT INTO ${table}(period_key,name,visits,users) VALUES(?,?,?,?)`).bind(periodKey,name,num(row.metrics?.[0]),num(row.metrics?.[1])));
   }
+  for(const group of chunks(statements,60)) await env.DB.batch(group);
 }
 
 /* -------------------- YANDEX WEBMASTER -------------------- */
