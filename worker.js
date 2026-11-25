@@ -673,6 +673,9 @@ async function syncSource(source, env) {
 async function syncMetrika(env) {
   if (!env.YANDEX_TOKEN) throw new Error('Добавьте YANDEX_TOKEN в Cloudflare Runtime Secrets.');
   const headers = { Authorization: `OAuth ${env.YANDEX_TOKEN}` };
+  const flushD1 = async statements => {
+    for(let i=0;i<statements.length;i+=60) await env.DB.batch(statements.slice(i,i+60));
+  };
   const counterId = await resolveMetrikaCounterId(env, headers);
   await saveResolved(env, 'metrika', counterId, env.SITE_URL || `Счётчик ${counterId}`);
   const base = 'https://api-metrika.yandex.net/stat/v1/data';
@@ -723,53 +726,62 @@ async function syncMetrika(env) {
     }
   }
 
+  const batchdaily=[];
   for (const row of dailyRes.data || []) {
     const date = dimensionName(row.dimensions?.[0]);
     const m = row.metrics || [];
     if (!date) continue;
     const extra = dailyGoalMap.get(date) || { emailClicks: 0, formSubmits: 0 };
-    await env.DB.prepare(`INSERT INTO daily_site_metrics(date,visits,users,pageviews,bounce_rate,depth,duration,conversions,new_visitors,email_clicks,form_submits,updated_at)
+    batchdaily.push(env.DB.prepare(`INSERT INTO daily_site_metrics(date,visits,users,pageviews,bounce_rate,depth,duration,conversions,new_visitors,email_clicks,form_submits,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(date) DO UPDATE SET visits=excluded.visits,users=excluded.users,pageviews=excluded.pageviews,bounce_rate=excluded.bounce_rate,depth=excluded.depth,duration=excluded.duration,conversions=excluded.conversions,new_visitors=excluded.new_visitors,email_clicks=excluded.email_clicks,form_submits=excluded.form_submits,updated_at=CURRENT_TIMESTAMP`)
-      .bind(date,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5]),num(m[7]),num(m[6]),extra.emailClicks,extra.formSubmits).run();
+      .bind(date,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5]),num(m[7]),num(m[6]),extra.emailClicks,extra.formSubmits));
   }
 
+  await flushD1(batchdaily);
   const periodKey = dateOnly(new Date());
   await replaceDimensionTable(env, 'traffic_sources', periodKey, sourceRes.data || [], async (row) => {
     const m = row.metrics || []; return [dimensionName(row.dimensions?.[0]) || 'Прочее', num(m[0]), num(m[1]), num(m[2]), num(m[3])];
   });
   await env.DB.prepare('DELETE FROM landing_pages WHERE period_key=?').bind(periodKey).run();
+  const batchpages=[];
   for (const row of pageRes.data || []) {
     const page = dimensionName(row.dimensions?.[0]); const m = row.metrics || []; if (!page) continue;
-    await env.DB.prepare(`INSERT INTO landing_pages(period_key,page,title,visits,users,bounce,depth,duration,conversions,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
-      .bind(periodKey,page,page,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])).run();
+    batchpages.push(env.DB.prepare(`INSERT INTO landing_pages(period_key,page,title,visits,users,bounce,depth,duration,conversions,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      .bind(periodKey,page,page,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])));
   }
-  // Частичный сбой одного среза Метрики не должен стирать последний успешный результат из D1.
+
+  await flushD1(batchpages);  // Частичный сбой одного среза Метрики не должен стирать последний успешный результат из D1.
   if ((deviceRes.data || []).length) await replaceSimpleDimension(env, 'device_stats', periodKey, deviceRes.data || []);
   if ((regionRes.data || []).length) await replaceSimpleDimension(env, 'region_stats', periodKey, regionRes.data || []);
   if ((engineRes.data || []).length) await replaceSimpleDimension(env, 'search_engines', periodKey, engineRes.data || []);
 
   await env.DB.prepare('DELETE FROM utm_stats WHERE period_key=?').bind(periodKey).run();
+  const batchutm=[];
   for (const row of utmRes.data || []) {
     const source = dimensionName(row.dimensions?.[0]) || '(не задано)';
     const medium = dimensionName(row.dimensions?.[1]) || '(не задано)';
     const campaign = dimensionName(row.dimensions?.[2]) || '(не задано)';
     const m = row.metrics || [];
     if (source === '(не задано)' && medium === '(не задано)' && campaign === '(не задано)') continue;
-    await env.DB.prepare(`INSERT INTO utm_stats(period_key,source,medium,campaign,visits,users,bounce,depth,duration,conversions) VALUES(?,?,?,?,?,?,?,?,?,?)`)
-      .bind(periodKey,source,medium,campaign,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])).run();
+    batchutm.push(env.DB.prepare(`INSERT INTO utm_stats(period_key,source,medium,campaign,visits,users,bounce,depth,duration,conversions) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+      .bind(periodKey,source,medium,campaign,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4]),num(m[5])));
   }
 
+  await flushD1(batchutm);
   await env.DB.prepare('DELETE FROM search_phrases WHERE period_key=?').bind(periodKey).run();
+  const batchphrases=[];
   for (const row of phraseRes.data || []) {
     const engine = dimensionName(row.dimensions?.[0]) || 'Поиск';
     const phrase = dimensionName(row.dimensions?.[1]) || '';
     const m = row.metrics || [];
     if (!phrase) continue;
-    await env.DB.prepare(`INSERT INTO search_phrases(period_key,engine,phrase,visits,users,bounce,depth,duration) VALUES(?,?,?,?,?,?,?,?)`)
-      .bind(periodKey,engine,phrase,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4])).run();
+    batchphrases.push(env.DB.prepare(`INSERT INTO search_phrases(period_key,engine,phrase,visits,users,bounce,depth,duration) VALUES(?,?,?,?,?,?,?,?)`)
+      .bind(periodKey,engine,phrase,num(m[0]),num(m[1]),num(m[2]),num(m[3]),num(m[4])));
   }
 
+  await flushD1(batchphrases);
+  const batchGoals=[];
   await env.DB.prepare('DELETE FROM metrika_goals WHERE period_key=?').bind(periodKey).run();
   const cutoff30 = new Date(); cutoff30.setHours(0,0,0,0); cutoff30.setDate(cutoff30.getDate()-29);
   const totalVisits = num(sourceRes.totals?.[0]) || (dailyRes.data || []).filter(r => { const d=dimensionName(r.dimensions?.[0]); return d && new Date(`${d}T12:00:00`) >= cutoff30; }).reduce((a,r)=>a+num(r.metrics?.[0]),0);
@@ -779,10 +791,12 @@ async function syncMetrika(env) {
     const report = await apiGet(withParams(base, { ids: counterId, date1: '29daysAgo', date2: 'today', accuracy: 'full', metrics }), headers).catch(() => ({ totals: [] }));
     for (let i = 0; i < chunk.length; i++) {
       const g = chunk[i]; const reaches = num(report.totals?.[i]); const conv = totalVisits ? reaches / totalVisits * 100 : 0;
-      await env.DB.prepare(`INSERT INTO metrika_goals(period_key,goal_id,name,type,category,reaches,visits,conversion_rate) VALUES(?,?,?,?,?,?,?,?)`)
-        .bind(periodKey,String(g.id),String(g.name || `Цель ${g.id}`),String(g.type || ''),g.category || 'other',reaches,totalVisits,conv).run();
+      batchGoals.push(env.DB.prepare(`INSERT INTO metrika_goals(period_key,goal_id,name,type,category,reaches,visits,conversion_rate) VALUES(?,?,?,?,?,?,?,?)`)
+        .bind(periodKey,String(g.id),String(g.name || `Цель ${g.id}`),String(g.type || ''),g.category || 'other',reaches,totalVisits,conv));
     }
   }
+
+  await flushD1(batchGoals);
 
   for (const periodDays of [7,30,90]) {
     const aggregate = await apiGet(withParams(base, { ids: counterId, date1: `${periodDays-1}daysAgo`, date2: 'today', accuracy: 'full', metrics: dailyMetrics.join(',') }), headers).catch(() => null);
