@@ -38,7 +38,7 @@
 
   const blank = () => ({
     site:[], sitePeriods:{}, sources:[], pages:[], searchEngines:[], searchPhrases:[], utm:[], devices:[], regions:[], goals:[],
-    seo:[], seoSummary:null, seoIndex:[], seoProblems:[], gscDaily:[], gscQueries:[], gscPages:[], gscDevices:[],
+    seo:[], seoSummary:null, webmasterTotals:null, seoIndex:[], seoProblems:[], gscDaily:[], gscQueries:[], gscPages:[], gscDevices:[],
     adsMeta:[], adsDaily:[], social:[], socialDaily:[], email:[], emailLinks:[], businessDaily:[], businessQueries:[], workspace:[], syncLog:[],
     meta:{metrikaCounterId:null,webmasterHostId:null,gscProperty:null,vkGroupId:null,siteUrl:null,goalMapping:{email:[],forms:[]}}
   });
@@ -195,6 +195,7 @@
         }
       }
       if(Array.isArray(d.webmaster?.seo)&&d.webmaster.seo.length)state.seo=d.webmaster.seo;
+      state.webmasterTotals=d.webmaster?.totals||null;
       if(d.searchConsole){
         if(Array.isArray(d.searchConsole.daily)&&d.searchConsole.daily.length)state.gscDaily=d.searchConsole.daily;
         if(Array.isArray(d.searchConsole.queries)&&d.searchConsole.queries.length)state.gscQueries=d.searchConsole.queries;
@@ -490,10 +491,11 @@
 
   function renderSeo(){
     renderGoogleSearchConsole();
-    const days=rangeDays(),s=seoSummary();metricGrid('seoMetrics',[
-      {title:'Показы',value:s?fmt.format(s.shows):'—',note:'по запросам'}, {title:'Клики',value:s?fmt.format(s.clicks):'—',note:'из поиска Яндекса'}, {title:'CTR',value:s?pct(s.ctr):'—',note:'сниппеты'}, {title:'Средняя позиция',value:s&&s.position?num(s.position).toFixed(1):'—',note:'взвешено по показам'}, {title:'Страниц в поиске',value:s?fmt.format(s.searchablePages||0):'—',note:'Вебмастер'}, {title:'Исключено',value:s?fmt.format(s.excludedPages||0):'—',note:'не участвуют в поиске'}, {title:'ИКС',value:s?fmt.format(s.sqi||0):'—',note:'качество сайта'}, {title:'Активные проблемы',value:fmt.format((state.seoProblems||[]).filter(x=>String(x.state||'').toUpperCase()!=='ABSENT').length),note:'только реально обнаруженные'}]);
+    const days=rangeDays(),s=seoSummary(),yt=state.webmasterTotals,hasYt=Boolean(yt?.available);
+    metricGrid('seoMetrics',[
+      {title:'Показы',value:hasYt?fmt.format(yt.shows):'—',note:'все поисковые запросы · выбранный период'}, {title:'Клики',value:hasYt?fmt.format(yt.clicks):'—',note:'из поиска Яндекса · выбранный период'}, {title:'CTR',value:hasYt&&yt.shows?pct(yt.clicks/yt.shows*100):hasYt?'0,0%':'—',note:'общая статистика поиска'}, {title:'Средняя позиция',value:state.seo?.length&&s?.position?num(s.position).toFixed(1):'—',note:'только доступные популярные запросы'}, {title:'Страниц в поиске',value:s?fmt.format(s.searchablePages||0):'—',note:'Вебмастер'}, {title:'Исключено',value:s?fmt.format(s.excludedPages||0):'—',note:'не участвуют в поиске'}, {title:'ИКС',value:s?fmt.format(s.sqi||0):'—',note:'качество сайта'}, {title:'Активные проблемы',value:fmt.format((state.seoProblems||[]).filter(x=>String(x.state||'').toUpperCase()!=='ABSENT').length),note:'только реально обнаруженные'}]);
     const yStatus=apiStatus.integrations?.webmaster||{},yStatusText=document.getElementById('yandexWebmasterStatusText');
-    if(yStatusText)yStatusText.textContent=s?`Хост ${state.meta?.webmasterHostId||yStatus.resolvedLabel||'Яндекс Вебмастер'} · запросы обновляются по выбранному периоду.`:(yStatus.message||'Данные Яндекс Вебмастера пока не синхронизированы.');
+    if(yStatusText){const host=state.meta?.webmasterHostId||yStatus.resolvedLabel||'Яндекс Вебмастер';yStatusText.textContent=`Хост ${host} · ${hasYt?'общие показы и клики получены из истории Яндекса':'общая поисковая статистика за период недоступна'} · ${state.seo?.length?'популярных запросов: '+state.seo.length:'список популярных запросов пока пуст'}.`;}
     const indexRows=(state.seoIndex||[]).filter(x=>inWindow(x.date,days));
     const indexFallback=indexRows.length?indexRows:(state.seoIndex||[]).slice(-90);
     if(indexFallback.length){chart('yandexIndexationChart','line',{labels:indexFallback.map(x=>dateRu(x.date)),datasets:[{label:'Страниц в поиске',data:indexFallback.map(x=>num(x.pagesInSearch)),borderColor:'#6657f6',backgroundColor:'rgba(102,87,246,.08)',fill:true,tension:.25}]},{plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:false,ticks:{precision:0}}}});}else destroyChart('yandexIndexationChart');
