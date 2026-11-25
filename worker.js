@@ -1,5 +1,5 @@
 // CS Marketing by skayfall v2.10.0 — period report analytics and Metrika counter diagnostics
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "2.10.1";
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const SESSION_COOKIE = 'cs_marketing_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 4;

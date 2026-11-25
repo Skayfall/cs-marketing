@@ -10,7 +10,7 @@
 <link href="/icon-192.png" rel="apple-touch-icon"/>
 <link href="/manifest.webmanifest" rel="manifest"/>
 <link href="https://cdn.jsdelivr.net" rel="preconnect"/>
-<link href="/styles.css?v=2.10.0" rel="stylesheet"/>
+<link href="/styles.css?v=2.10.1" rel="stylesheet"/>
 </head>
 <body>
 <section aria-labelledby="authTitle" class="auth-screen" id="authScreen">
@@ -120,19 +120,7 @@
 </section>
 <section class="view" id="retail">
   <div class="retail-intro"><div><div class="eyebrow">Розница · ВсеИнструменты</div><h2>Продажи по Excel-отчётам</h2>
-    <p class="muted">Данные из выгрузок ВсеИнструменты. Сводные отчёты содержат результаты по артикулам за указанный период. Используй общий фильтр дат сверху.</p></div></div>
-  <div class="metric-grid" id="retailMetrics"></div>
-  <div class="two-col wide-left">
-    <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика продаж</div><h3>Выручка по отчётным периодам</h3></div></div>
-      <div class="chart-wrap"><canvas id="retailSalesChart"></canvas></div><div id="retailHistoryInfo" class="muted retail-small">Загрузка истории…</div></article>
-    <article class="panel"><div class="panel-head"><div><div class="eyebrow">Методика</div><h3>Что показывают цифры</h3></div></div>
-      <div id="retailDataQuality" class="retail-quality muted">Загрузка данных…</div></article>
-  </div>
-  <article class="panel"><div class="panel-head"><div><div class="eyebrow">Ассортимент из отчётов</div><h3>ТОП товаров по выручке</h3>
-    <p class="muted">Данные по SKU из загруженных файлов. Сортировка по выручке без НДС с учётом отрицательных корректировок.</p></div></div>
-    <div class="table-scroll"><table><thead><tr><th>Наименование</th><th>Артикул</th><th>Шт.</th><th>Выручка</th><th>Доля</th><th>Маржинальность</th></tr></thead>
-      <tbody id="retailProductsTable"><tr><td colspan="6" class="empty-cell">Нет загруженных отчётов.</td></tr></tbody></table></div>
-  </article>
+    <p class="muted">Данные из выгрузок ВсеИнструменты. Сводные отчёты содержат результаты по артикулам за указанный период. Используй общий фильтр дат сверху.</p></div><button id="retailTopUploadBtn" class="primary-btn retail-upload-action" type="button" aria-controls="retailFile">Загрузить Excel-файл</button></div>
   <article class="panel retail-upload-panel">
     <div class="panel-head"><div><div class="eyebrow">Импорт</div><h3>Загрузить отчёт ВсеИнструменты</h3>
       <p class="muted">Поддерживается Excel .xlsx с периодом в шапке, выручкой без НДС, количеством, артикулом и маржинальностью. Файл обрабатывается локально в браузере; строки сохраняются в Cloudflare D1.</p></div></div>
@@ -150,6 +138,18 @@
       <h4>Проверка сумм</h4><div class="table-scroll"><table><thead><tr><th>Артикул</th><th>Товар</th><th>Шт.</th><th>Выручка</th><th>Маржинальность</th></tr></thead><tbody id="retailPreviewTable"></tbody></table></div>
       <p id="retailPreviewNote" class="muted retail-small"></p><div class="button-row"><button class="primary-btn" id="retailImportBtn" type="button">Сохранить отчёт</button></div>
     </div>
+  </article>
+  <div class="metric-grid" id="retailMetrics"></div>
+  <div class="two-col wide-left">
+    <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">Динамика продаж</div><h3>Выручка по отчётным периодам</h3></div></div>
+      <div class="chart-wrap"><canvas id="retailSalesChart"></canvas></div><div id="retailHistoryInfo" class="muted retail-small">Загрузка истории…</div></article>
+    <article class="panel"><div class="panel-head"><div><div class="eyebrow">Методика</div><h3>Что показывают цифры</h3></div></div>
+      <div id="retailDataQuality" class="retail-quality muted">Загрузка данных…</div></article>
+  </div>
+  <article class="panel"><div class="panel-head"><div><div class="eyebrow">Ассортимент из отчётов</div><h3>ТОП товаров по выручке</h3>
+    <p class="muted">Данные по SKU из загруженных файлов. Сортировка по выручке без НДС с учётом отрицательных корректировок.</p></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Наименование</th><th>Артикул</th><th>Шт.</th><th>Выручка</th><th>Доля</th><th>Маржинальность</th></tr></thead>
+      <tbody id="retailProductsTable"><tr><td colspan="6" class="empty-cell">Нет загруженных отчётов.</td></tr></tbody></table></div>
   </article>
   <article class="panel"><div class="panel-head"><div><div class="eyebrow">История</div><h3>Загруженные отчёты</h3></div>
     <button class="secondary-btn" id="retailReloadBtn" type="button">Обновить список</button></div>
@@ -304,7 +304,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="/retail.js?v=2.10.0"></script>
+<script src="/retail.js?v=2.10.1"></script>
 <script src="/app.js?v=2.10.0"></script>
 </body>
 </html>

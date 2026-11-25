@@ -260,6 +260,7 @@
   }
   function init(){
     if(initDone)return;initDone=true;
+    $('retailTopUploadBtn')?.addEventListener('click',()=>$('retailFile')?.click());
     $('retailFile')?.addEventListener('change',onFile);
     $('retailSheetSelect')?.addEventListener('change',setSheet);
     $('retailHeaderRow')?.addEventListener('change',setHeaders);
