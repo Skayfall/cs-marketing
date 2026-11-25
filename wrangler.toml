@@ -4,6 +4,7 @@ compatibility_date = "2026-08-24"
 
 [vars]
 ADMIN_USERNAME = "admin"
+SITE_URL = "https://www.cs-trade.ru/"
 
 [secrets]
 required = ["ADMIN_PASSWORD", "SESSION_SECRET"]
